@@ -1,0 +1,37 @@
+{
+  "result": "passed",
+  "cases": [
+    {
+      "case": "empty",
+      "passed": true
+    },
+    {
+      "case": "zero_row",
+      "passed": true
+    },
+    {
+      "case": "today_long",
+      "passed": true
+    },
+    {
+      "case": "yesterday_short",
+      "passed": true
+    },
+    {
+      "case": "hedged_one_each",
+      "passed": true
+    },
+    {
+      "case": "negative",
+      "passed": true
+    },
+    {
+      "case": "nan",
+      "passed": true
+    },
+    {
+      "case": "infinite",
+      "passed": true
+    }
+  ]
+}

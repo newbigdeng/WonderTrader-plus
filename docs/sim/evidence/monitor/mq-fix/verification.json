@@ -1,0 +1,154 @@
+{
+  "date": "2026-10-15",
+  "result": "bounded_pass",
+  "source_heads": {
+    "wondertrader": "d816d8c5",
+    "wtpy": "1c7d3d3"
+  },
+  "native_regression": {
+    "result": "passed",
+    "cases": {
+      "before": {
+        "topics": {},
+        "order_ref_counts": [
+          2,
+          2
+        ],
+        "exit_code": 0,
+        "shutdown_seconds": 0.6677463679998255,
+        "destructor_completed": true
+      },
+      "after": {
+        "topics": {
+          "LOG": 2,
+          "TRD_ORDER": 2,
+          "TRD_TRADE": 1
+        },
+        "order_ref_counts": [
+          1,
+          1
+        ],
+        "exit_code": 0,
+        "shutdown_seconds": 0.6902437750004538,
+        "destructor_completed": true
+      }
+    }
+  },
+  "watchdog_callback_regression": {
+    "result": "passed",
+    "cases": {
+      "before": {
+        "forwarded_logs": 0,
+        "cleared_receiver": false,
+        "reconfigure_error": "Previously released receiver was released again",
+        "first_release_count": 2
+      },
+      "after": {
+        "forwarded_logs": 2,
+        "cleared_receiver": true,
+        "reconfigure_error": null,
+        "first_release_count": 1
+      }
+    }
+  },
+  "real_ctp_logs": {
+    "group": "simnow03",
+    "duration": 80.0,
+    "counts": {
+      "subscribe:": 1,
+      "gplog:": 26,
+      "heartbeat:": 6
+    },
+    "records": 33,
+    "unique_log_frames": 26
+  },
+  "controlled_native_events": {
+    "group": "mqprobe",
+    "duration": 240.0,
+    "counts": {
+      "subscribe:": 1,
+      "heartbeat:": 22,
+      "gplog:": 3,
+      "chnlevt:order": 6,
+      "chnlevt:trade": 3
+    },
+    "records": 35
+  },
+  "controlled_event_latency_ms": {
+    "samples": 12,
+    "minimum": 537.4765396118164,
+    "median": 554.9713373184204,
+    "maximum": 569.8039531707764,
+    "meaning": "Native notifier timestamp to WebSocket recorder arrival, same VM; not exchange or browser-paint latency"
+  },
+  "browser_observation": {
+    "method": "CUA DOM inspection",
+    "auto_refresh_checked": false,
+    "log_marker_visible": "MQ_UI_PUSH_BURST_0",
+    "cancel_notice_localid": 990002,
+    "trade_notice_localid": 990003,
+    "test_code": "TEST.MQ.0001",
+    "real_ctp_login_and_ready_logs_appended": true,
+    "ordinary_order_notice": "Intentionally ignored by the stock frontend; WebSocket frame received",
+    "duplicate_display_observed": true,
+    "duplicate_display_status": "Not located; controlled WebSocket frames and 26 real log frames are unique; do not count UI notices as executions"
+  },
+  "final_account": {
+    "result": "passed",
+    "stage": "complete",
+    "error_id": 0,
+    "trading_day": "20261015",
+    "positions_total": 0,
+    "active_or_uncertain_orders": 0,
+    "order_count": 4,
+    "available": 19999967.744,
+    "balance": 19999967.744,
+    "margin": 0,
+    "commission": 12.256,
+    "positions": [],
+    "orders": [
+      {
+        "instrument": "rb2701",
+        "exchange": "SHFE",
+        "status": "0",
+        "original_volume": 1,
+        "traded": 1,
+        "remaining": 0,
+        "active_or_uncertain": false
+      },
+      {
+        "instrument": "rb2701",
+        "exchange": "SHFE",
+        "status": "0",
+        "original_volume": 1,
+        "traded": 1,
+        "remaining": 0,
+        "active_or_uncertain": false
+      },
+      {
+        "instrument": "rb2701",
+        "exchange": "SHFE",
+        "status": "0",
+        "original_volume": 1,
+        "traded": 1,
+        "remaining": 0,
+        "active_or_uncertain": false
+      },
+      {
+        "instrument": "rb2701",
+        "exchange": "SHFE",
+        "status": "0",
+        "original_volume": 1,
+        "traded": 1,
+        "remaining": 0,
+        "active_or_uncertain": false
+      }
+    ]
+  },
+  "new_ctp_orders_sent": false,
+  "new_ctp_fills_verified": false,
+  "scope": "Native log publication, controlled native order/trade delivery and UI notifications; CTP new-order roundtrip with monitor remains unverified",
+  "deployment": "Recompiled WtCore/EventNotifier and relinked WtPorter with existing GCC8 build; atomic replacement in simnow-03 only; existing CTP libraries unchanged",
+  "build_packaging_note": "WtPorter post-build copy lacked libParserShm.so; exact existing link.txt command succeeded; no old CTP modules copied",
+  "hashes_computed": false
+}

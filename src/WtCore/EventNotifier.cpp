@@ -33,7 +33,10 @@ void on_mq_log(unsigned long id, const char* message, bool bServer)
 
 EventNotifier::EventNotifier()
 	: _mq_sid(0)
+	, _creator(NULL)
+	, _remover(NULL)
 	, _publisher(NULL)
+	, _register(NULL)
 	, _stopped(false)
 {
 	
@@ -42,11 +45,10 @@ EventNotifier::EventNotifier()
 
 EventNotifier::~EventNotifier()
 {
-	_stopped = true;
+	// Unblock the guarded event loop before waiting for its worker.
+	_asyncio.stop();
 	if (_worker)
 		_worker->join();
-
-	_asyncio.stop();
 
 	if (_remover && _mq_sid != 0)
 		_remover(_mq_sid);
@@ -94,14 +96,10 @@ bool EventNotifier::init(WTSVariant* cfg)
 
 	if (_worker == NULL)
 	{
-		boost::asio::io_service::work work(_asyncio);
 		_worker.reset(new StdThread([this]() {
-			while (!_stopped)
-			{
-				std::this_thread::sleep_for(std::chrono::milliseconds(2));
-				_asyncio.run_one();
-				//m_asyncIO.run();
-			}
+			// Keep the service alive for the entire worker lifetime, including idle periods.
+			boost::asio::io_service::work work(_asyncio);
+			_asyncio.run();
 		}));
 	}
 
@@ -221,6 +219,7 @@ void EventNotifier::notify(const char* trader, uint32_t localid, const char* std
 		orderToJson(strTrader.c_str(), localid, strCode.c_str(), ordInfo, data);
 		if (_publisher)
 			_publisher(_mq_sid, "TRD_ORDER", data.c_str(), (unsigned long)data.size());
+		ordInfo->release();
 	});
 
 	

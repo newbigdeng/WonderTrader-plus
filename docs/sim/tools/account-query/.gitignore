@@ -1,0 +1,7 @@
+config.ini
+AccountQuery
+flow/
+*.log
+account_latest.json*
+.query.lock
+sdk/

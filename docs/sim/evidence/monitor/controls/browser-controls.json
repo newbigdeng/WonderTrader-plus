@@ -1,0 +1,26 @@
+{
+  "kind": "actual_browser_controlled_native_event_validation",
+  "date": "2026-10-15",
+  "method": "DOM-visible textarea and checkbox observations in native wtpy monitor; native C++ EventNotifier, no Parser/Trader/Executer",
+  "cases": {
+    "checked_A_visible": true,
+    "unchecked_B_absent": true,
+    "resumed_C_visible": true,
+    "manual_refresh_reads_B_from_runner_log": true,
+    "group_switch_preserves_disabled_preference": true,
+    "real_observation_group_keeps_independent_enabled_preference": true,
+    "log_checkbox_visible_in_auto_mode": true
+  },
+  "fixture_log_markers": [
+    "LOG_CONTROL_A",
+    "LOG_CONTROL_B",
+    "LOG_CONTROL_C"
+  ],
+  "temporary_group": "logcontrols",
+  "ctp_orders_sent": 0,
+  "live_processes_restarted": false,
+  "cleanup": "Probe exited normally, receiver detached, temporary registration removed; evidence retained.",
+  "boundary": "Some UI log/notice duplicates remain unlocated. No new CTP order/fill acceptance. No filesystem screenshot export performed.",
+  "final_ui": "simnow03 selected, auto log enabled, push channel connected",
+  "hashes_computed": false
+}

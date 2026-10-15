@@ -1,0 +1,41 @@
+{
+  "verified_at": "2026-10-14T22:00:54.279075+08:00",
+  "environment": "SimNow first set 30003/30013",
+  "contract": "SHFE.rb.2701",
+  "sdk": "v6.7.13_20260225",
+  "tick_csv_lines": 4065,
+  "tick_csv_first": "rb2701,20261015,20261014,212652000,21:26:52,3063,101115,1.71698e+06,3101744860,101115,13737,3101744860",
+  "tick_csv_last": "rb2701,20261015,20261014,220053500,22:00:53,3059,184410,1.73339e+06,5650859310,0,0,0",
+  "files": [
+    {
+      "path": "FUT_Data/cache.dmb",
+      "bytes": 103736
+    },
+    {
+      "path": "FUT_Data/rt/min5/SHFE/rb2701.dmb",
+      "bytes": 6096
+    },
+    {
+      "path": "FUT_Data/rt/min1/SHFE/rb2701.dmb",
+      "bytes": 30384
+    },
+    {
+      "path": "FUT_Data/rt/ticks/SHFE/rb2701.dmb",
+      "bytes": 2560024
+    },
+    {
+      "path": "FUT_Data/rt/ticks/SHFE/rb2701.20261015.csv",
+      "bytes": 361403
+    }
+  ],
+  "first_round_net": -16.12900000065565,
+  "second_round_net": -16.127000000327826,
+  "total_net": -32.25600000098348,
+  "total_commission": 12.256,
+  "final_position_total": 0,
+  "final_active_orders": 0,
+  "all_owned_consumers_exited": true,
+  "datahub_stopped": true,
+  "tick_csv_rows": 4065,
+  "tick_csv_has_header": false
+}

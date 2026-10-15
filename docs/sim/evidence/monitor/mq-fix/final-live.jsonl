@@ -1,0 +1,33 @@
+{"received_at": 1792035958.5749917, "frame": {"type": "subscribe", "groupid": "simnow03"}}
+{"received_at": 1792035966.5607095, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965021, "message": "EventNotifier initialized with channel ipc:///home/zjh/wt-lab/records/simnow-03/run/monitor.ipc"}}
+{"received_at": 1792035966.561215, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965021, "message": "Reading executer config from executers.observe.yaml..."}}
+{"received_at": 1792035966.5616193, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965022, "message": "Executer factory WtExeFact loaded"}}
+{"received_at": 1792035966.562147, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965022, "message": "0 executers loaded"}}
+{"received_at": 1792035966.5625901, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965023, "message": "1 parsers started"}}
+{"received_at": 1792035966.5628078, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965023, "message": "registerFront: tcp://182.254.243.31:30003"}}
+{"received_at": 1792035966.5638747, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965024, "message": "1 trading channels started"}}
+{"received_at": 1792035966.564746, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965024, "message": "CtaTicker will drive engine with session TRADING"}}
+{"received_at": 1792035966.5654204, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965024, "message": "Trading date confirmed: 20261015"}}
+{"received_at": 1792035966.566383, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965025, "message": "0 conditions recovered, setup time: 0"}}
+{"received_at": 1792035966.566828, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "debug", "time": 1792035965025, "message": "Main KBars confirmed: SHFE.rb.2701#m1"}}
+{"received_at": 1792035966.5672588, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965025, "message": "Reading final bars of SHFE.rb.2701 via extended loader..."}}
+{"received_at": 1792035966.5677629, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "debug", "time": 1792035965026, "message": "RT min1 block of SHFE.rb2701 loaded"}}
+{"received_at": 1792035966.568215, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "debug", "time": 1792035965026, "message": "His min1 bars of SHFE.rb.2701 loaded, 0 from history, 72 from realtime"}}
+{"received_at": 1792035966.568853, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965026, "message": "Market data subscribed: SHFE.rb.2701"}}
+{"received_at": 1792035966.5694203, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965026, "message": "TrendPullback: one lot, closed m1 bars, stop/target/time exit"}}
+{"received_at": 1792035966.5701118, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965027, "message": "Trading day 20261015 begun"}}
+{"received_at": 1792035966.5711124, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965994, "message": "[TraderCTP][9999-REDACTED] Login succeed, AppID: simnow_client_test, Sessionid: 1283578414, login time: 11:46:05..."}}
+{"received_at": 1792035966.5718348, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965994, "message": "[TraderCTP][9999-REDACTED] Login succeed, trading date: 20261015..."}}
+{"received_at": 1792035966.572647, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035965994, "message": "[TraderCTP][9999-REDACTED] Querying confirming state of settlement data..."}}
+{"received_at": 1792035966.5734243, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035966016, "message": "[TraderCTP][9999-REDACTED] Trading channel initialized..."}}
+{"received_at": 1792035966.573864, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035966016, "message": "[simnow] Trader login succeed, trading date: 20261015"}}
+{"received_at": 1792035967.5757554, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035967038, "message": "[simnow] SHFE.rb.2701 position updated, long:0[0]|0[0], short:0[0]|0[0]"}}
+{"received_at": 1792035967.576752, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035967039, "message": "[simnow] Position data updated"}}
+{"received_at": 1792035969.5784078, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035969067, "message": "[simnow] SHFE.rb.2701 action stats updated, long opened: 2, long closed: 0, new long closed: 2, short opened: 0, short closed: 0, new short closed: 0"}}
+{"received_at": 1792035970.581553, "frame": {"type": "gplog", "groupid": "simnow03", "tag": "info", "time": 1792035970126, "message": "[simnow] Trading channel ready"}}
+{"received_at": 1792035980.586157, "frame": {"type": "heartbeat", "message": "pong"}}
+{"received_at": 1792035990.5882623, "frame": {"type": "heartbeat", "message": "pong"}}
+{"received_at": 1792036000.5913854, "frame": {"type": "heartbeat", "message": "pong"}}
+{"received_at": 1792036010.6022809, "frame": {"type": "heartbeat", "message": "pong"}}
+{"received_at": 1792036020.6064496, "frame": {"type": "heartbeat", "message": "pong"}}
+{"received_at": 1792036030.610811, "frame": {"type": "heartbeat", "message": "pong"}}

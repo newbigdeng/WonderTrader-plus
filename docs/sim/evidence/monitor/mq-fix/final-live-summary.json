@@ -1,0 +1,10 @@
+{
+  "group": "simnow03",
+  "duration": 80.0,
+  "counts": {
+    "subscribe:": 1,
+    "gplog:": 26,
+    "heartbeat:": 6
+  },
+  "records": 33
+}

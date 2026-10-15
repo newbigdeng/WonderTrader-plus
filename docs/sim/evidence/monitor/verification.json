@@ -1,0 +1,68 @@
+{
+  "date": "2026-10-15",
+  "verified_at": "2026-10-15T10:58:00.052144+08:00",
+  "result": "passed",
+  "groups": [
+    "simnow03",
+    "acceptance01",
+    "acceptance02"
+  ],
+  "http_read_checks": 32,
+  "live_mode": "observe; no executers; TrendPullback armed=False",
+  "live_funds": {
+    "prebalance": 20000000.0,
+    "balance": 19999967.744,
+    "closeprofit": -20.0,
+    "dynprofit": 0.0,
+    "margin": 0.0,
+    "fee": 12.256,
+    "available": 19999967.744,
+    "deposit": 0.0,
+    "withdraw": 0.0
+  },
+  "archive_orders_each": 2,
+  "archive_trades_each": 2,
+  "repeat_refresh_counts": {
+    "orders": [
+      2,
+      2,
+      2
+    ],
+    "trades": [
+      2,
+      2,
+      2
+    ]
+  },
+  "sqlite_schedules": [
+    [
+      "simnow03",
+      "false",
+      "false"
+    ]
+  ],
+  "dependencies": {
+    "fastapi": "0.143.1",
+    "uvicorn": "0.54.0",
+    "websockets": "17.2",
+    "starlette": "1.8.0",
+    "pydantic": "2.14.1"
+  },
+  "websocket_subscribe_and_heartbeat": "passed",
+  "native_mq_to_websocket_log": "No native log frame observed within 55 seconds",
+  "monitor_single_instance": "passed",
+  "archive_data_mode": "independent snapshot copies",
+  "processes": {
+    "monitor": 7851,
+    "datahub": 5353,
+    "observer": 5354,
+    "mode": "observe; zero executers"
+  },
+  "processes_alive": {
+    "monitor": true,
+    "datahub": true,
+    "observer": true
+  },
+  "current_snapshot_mtime": "2026-10-15T11:07:00.461772+08:00",
+  "as_of": "2026-10-15T11:07:59.603578+08:00"
+}

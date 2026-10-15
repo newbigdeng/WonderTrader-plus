@@ -1,0 +1,11 @@
+create server
+init server
+EventNotifier initialized with channel ipc:///home/zjh/wt-lab/records/simnow-03/monitor/evidence/mq-fix-20261015/after.ipc
+COMMAND LOG MQ_IDLE_FIRST
+COMMAND ORDER
+COMMAND CANCEL
+COMMAND TRADE
+COMMAND LOG MQ_IDLE_SECOND
+ORDER_REFS 1
+ORDER_REFS 1
+NOTIFIER_DESTROYED

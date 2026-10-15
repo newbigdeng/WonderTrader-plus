@@ -1,0 +1,29 @@
+--- a/wtpy/monitor/WatchDog.py
++++ b/wtpy/monitor/WatchDog.py
+@@ -498,7 +498,7 @@
+ 
+         guard = 'true' if appConf["guard"] else 'false'
+         redirect = 'true' if appConf["redirect"] else 'false'
+-        schedule = 'true' if appConf["schedule"] else 'false'
++        schedule = 'true' if appConf["schedule"]["active"] else 'false'
+ 
+         stype = 1 if isGroup else 0
+ 
+--- a/wtpy/monitor/DataMgr.py
++++ b/wtpy/monitor/DataMgr.py
+@@ -864,6 +864,7 @@
+ 
+             trdCache["corders"].append(tItem)
+         
++        trdCache["lastrow"] = last_row + len(lines)
+         return trdCache["corders"][-limit:]
+ 
+     def get_channel_trades(self, grpid:str, chnlid:str, limit:int = 200):
+@@ -919,6 +920,7 @@
+ 
+             trdCache["ctrades"].append(tItem)
+         
++        trdCache["lastrow"] = last_row + len(lines)
+         return trdCache["ctrades"][-limit:]
+ 
+     def get_channel_positions(self, grpid:str, chnlid:str):

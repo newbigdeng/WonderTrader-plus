@@ -1,0 +1,7 @@
+{
+  "upstream_bundle_patch_reproducible": true,
+  "script_idempotence": true,
+  "bundle_syntax": "passed",
+  "log_control_behavior": "passed",
+  "hashes_computed": false
+}

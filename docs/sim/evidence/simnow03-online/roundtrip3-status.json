@@ -1,0 +1,108 @@
+{
+  "started": 1791986308.3307102,
+  "mode": "simnow_one_lot_roundtrip",
+  "ticks": 45,
+  "events": [
+    {
+      "at": 1791986318.1409297,
+      "target": 1,
+      "reason": "acceptance_open"
+    },
+    {
+      "at": 1791986325.1103816,
+      "target": 0,
+      "reason": "acceptance_close"
+    }
+  ],
+  "errors": [],
+  "pre_account_clear": true,
+  "recovery_exposure_matched": false,
+  "trading_day": "20261015",
+  "python_on_init": true,
+  "broker_trades": [
+    {
+      "localid": "1239475950",
+      "date": "20261014",
+      "time": "1791986319000",
+      "code": "SHFE.rb.2701",
+      "action": "OL",
+      "volume": "1",
+      "price": "3059",
+      "tradeid": "       60703",
+      "orderid": "       84465"
+    },
+    {
+      "localid": "1239475951",
+      "date": "20261014",
+      "time": "1791986325000",
+      "code": "SHFE.rb.2701",
+      "action": "CNL",
+      "volume": "1",
+      "price": "3058",
+      "tradeid": "       60733",
+      "orderid": "       84511"
+    }
+  ],
+  "broker_terminal_orders": [
+    {
+      "localid": "1239475950",
+      "date": "20261014",
+      "inserttime": "1791986319000",
+      "code": "SHFE.rb.2701",
+      "action": "OL",
+      "volume": "1",
+      "traded": "1",
+      "price": "3059",
+      "orderid": "       84465",
+      "canceled": "FALSE",
+      "remark": "全部成交报单已提交"
+    },
+    {
+      "localid": "1239475951",
+      "date": "20261014",
+      "inserttime": "1791986325000",
+      "code": "SHFE.rb.2701",
+      "action": "CNL",
+      "volume": "1",
+      "traded": "1",
+      "price": "3058",
+      "orderid": "       84511",
+      "canceled": "FALSE",
+      "remark": "全部成交报单已提交"
+    }
+  ],
+  "updated": 1791986331.0686433,
+  "last_tick": {
+    "action_date": 20261014,
+    "action_time": 215855000,
+    "trading_date": 20261015,
+    "price": 3059.0,
+    "bid_price_0": 3058.0,
+    "ask_price_0": 3059.0,
+    "bid_qty_0": 1449.0,
+    "ask_qty_0": 1602.0
+  },
+  "broker_positions": [
+    {
+      "code": "SHFE.rb.2701",
+      "long": {
+        "newvol": 0.0,
+        "newavail": 0.0,
+        "prevol": 0.0,
+        "preavail": 0.0
+      },
+      "short": {
+        "newvol": 0.0,
+        "newavail": 0.0,
+        "prevol": 0.0,
+        "preavail": 0.0
+      }
+    }
+  ],
+  "first_broker_fill_at": 1791986320.0015376,
+  "post_account_clear": true,
+  "post_position_total": 0,
+  "post_active_orders": 0,
+  "roundtrip_passed": true,
+  "ended": 1791986335.097556
+}

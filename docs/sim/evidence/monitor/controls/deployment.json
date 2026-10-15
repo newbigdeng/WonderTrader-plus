@@ -1,0 +1,11 @@
+{
+  "files": [
+    "wtpy/monitor/static/console/monitor-log-controls.js",
+    "wtpy/monitor/static/console/static/js/app.5fc723073e2fadbc897d.js",
+    "wtpy/monitor/static/console/index.html",
+    "tools/patch_monitor_log_controls.py",
+    "tools/test_monitor_log_controls.cjs"
+  ],
+  "scope": "static monitor controls only; no CTP changes or engine restart",
+  "hashes_computed": false
+}

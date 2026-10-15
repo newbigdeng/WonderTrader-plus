@@ -1,0 +1,52 @@
+{
+  "kind": "controlled_fixture_monitor_reader_validation",
+  "measured_at": "2026-10-15T14:23:20.657207+08:00",
+  "source_data_mgr": "/home/zjh/wt-lab/src/wtpy/wtpy/monitor/DataMgr.py",
+  "source_watchdog": "/home/zjh/wt-lab/src/wtpy/wtpy/monitor/WatchDog.py",
+  "historical_archive_read_only": "/home/zjh/wt-lab/records/simnow-03/run/generated_online_roundtrip_03",
+  "ctp_connected": false,
+  "orders_sent": 0,
+  "real_generated_modified": false,
+  "real_monitor_database_modified": false,
+  "processes_started_or_stopped": false,
+  "hashes_computed": false,
+  "checks": {
+    "repeated_historical_orders": {
+      "counts": [
+        2,
+        2,
+        2
+      ],
+      "passed": true
+    },
+    "repeated_historical_trades": {
+      "counts": [
+        2,
+        2,
+        2
+      ],
+      "passed": true
+    },
+    "offline_snapshot_positions": {
+      "fixture_only": true,
+      "fixture_market_session": "NON_TRADING",
+      "fixture_trading_day": 20000101,
+      "channel_gross_position": 1,
+      "strategy_position_volume": 1,
+      "portfolio_position_volume": 1,
+      "passed": true,
+      "boundary": "Proves saved snapshots can be read without a session gate; does not query CTP or prove snapshot freshness."
+    },
+    "disabled_schedule_persistence": {
+      "input_active": false,
+      "sqlite_schedule": "false",
+      "restored_active": false,
+      "guard": false,
+      "mqurl": "",
+      "worker_started": false,
+      "passed": true
+    }
+  },
+  "fixture_directory_was_temporary": true,
+  "all_passed": true
+}

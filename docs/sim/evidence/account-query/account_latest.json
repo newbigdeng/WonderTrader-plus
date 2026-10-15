@@ -1,0 +1,10 @@
+{
+  "result":"passed",
+  "queried_at":"2026-10-14 22:33:02 +0800",
+  "stage":"complete",
+  "error_id":0,
+  "login_trading_day":"20261015",
+  "accounts":[
+    {"CurrencyID":"CNY","TradingDay":"20261015","SettlementID":1,"Available":19999967.743999999,"Balance":19999967.743999999,"CloseProfit":-20,"Commission":12.256,"Credit":0,"CurrMargin":0,"Deposit":0,"ExchangeMargin":0,"FrozenCash":0,"FrozenCommission":0,"FrozenMargin":0,"PositionProfit":0,"PreBalance":20000000,"Reserve":0,"Withdraw":0,"WithdrawQuota":15999974.189999999}
+  ]
+}

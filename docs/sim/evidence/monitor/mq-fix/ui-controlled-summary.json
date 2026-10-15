@@ -1,0 +1,12 @@
+{
+  "group": "mqprobe",
+  "duration": 240.0,
+  "counts": {
+    "subscribe:": 1,
+    "heartbeat:": 22,
+    "gplog:": 3,
+    "chnlevt:order": 6,
+    "chnlevt:trade": 3
+  },
+  "records": 35
+}

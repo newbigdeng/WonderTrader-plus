@@ -1,0 +1,18 @@
+[ 59%] Built target WTSUtils
+[ 64%] Built target WTSTools
+Scanning dependencies of target WtCore
+[ 67%] Building CXX object WtCore/CMakeFiles/WtCore.dir/EventNotifier.cpp.o
+[ 67%] Linking CXX static library ../build_x64/Release/libs/libWtCore.a
+[ 91%] Built target WtCore
+[ 91%] Linking CXX shared library ../build_x64/Release/bin/WtPorter/libWtPorter.so
+depends modules copied
+Error copying file "/work/build/gcc8-release/build_x64/Release/bin/libParserShm.so" to "/work/build/gcc8-release/build_x64/Release/bin/WtPorter/parsers/".
+WtPorter/CMakeFiles/WtPorter.dir/build.make:253: recipe for target 'build_x64/Release/bin/WtPorter/libWtPorter.so' failed
+make[3]: *** [build_x64/Release/bin/WtPorter/libWtPorter.so] Error 1
+make[3]: *** Deleting file 'build_x64/Release/bin/WtPorter/libWtPorter.so'
+CMakeFiles/Makefile2:1969: recipe for target 'WtPorter/CMakeFiles/WtPorter.dir/all' failed
+make[2]: *** [WtPorter/CMakeFiles/WtPorter.dir/all] Error 2
+CMakeFiles/Makefile2:1981: recipe for target 'WtPorter/CMakeFiles/WtPorter.dir/rule' failed
+make[1]: *** [WtPorter/CMakeFiles/WtPorter.dir/rule] Error 2
+make: *** [WtPorter] Error 2
+Makefile:560: recipe for target 'WtPorter' failed
