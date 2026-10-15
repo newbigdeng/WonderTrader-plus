@@ -1,0 +1,146 @@
+{
+  "observed_at": "2026-10-15T21:37:35.105333+08:00",
+  "runtime_package": "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy",
+  "comparisons": [
+    {
+      "deployed": "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/libWtPorter.so",
+      "build_artifact": "/home/zjh/wt-lab/build/gcc8-release/build_x64/Release/bin/WtPorter/libWtPorter.so",
+      "bytes": 2904320,
+      "byte_equal": true
+    },
+    {
+      "deployed": "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/libWtDataStorage.so",
+      "build_artifact": "/home/zjh/wt-lab/build/gcc8-release/build_x64/Release/bin/libWtDataStorage.so",
+      "bytes": 1555928,
+      "byte_equal": true
+    },
+    {
+      "deployed": "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/parsers/libParserUDP.so",
+      "build_artifact": "/home/zjh/wt-lab/build/gcc8-release/build_x64/Release/bin/libParserUDP.so",
+      "bytes": 224832,
+      "byte_equal": true
+    },
+    {
+      "deployed": "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/traders/libTraderCTP.so",
+      "build_artifact": "/home/zjh/wt-lab/records/simnow-01/adapter-build/libTraderCTP.so",
+      "bytes": 450744,
+      "byte_equal": true
+    }
+  ],
+  "hashes_computed": false,
+  "programs_started_or_stopped": false,
+  "orders_sent": 0,
+  "groups": [
+    {
+      "groupid": "simnow03",
+      "name": "simnow-03 实时观察",
+      "path": "/home/zjh/wt-lab/records/simnow-03/run",
+      "datmod": "auto",
+      "mqurl": "ipc:///home/zjh/wt-lab/records/simnow-03/run/monitor.ipc"
+    },
+    {
+      "groupid": "acceptance01",
+      "name": "验收档案① 开仓后恢复平仓",
+      "path": "/home/zjh/wt-lab/records/simnow-03/monitor/views/acceptance01",
+      "datmod": "mannual",
+      "mqurl": ""
+    },
+    {
+      "groupid": "acceptance02",
+      "name": "验收档案② 连续单手开平",
+      "path": "/home/zjh/wt-lab/records/simnow-03/monitor/views/acceptance02",
+      "datmod": "mannual",
+      "mqurl": ""
+    },
+    {
+      "groupid": "mqprobe",
+      "name": "原生MQ受控验收（不连接柜台）",
+      "path": "/home/zjh/wt-lab/records/simnow-03/monitor/views/mqprobe",
+      "datmod": "auto",
+      "mqurl": "ipc:///home/zjh/wt-lab/records/simnow-03/monitor/evidence/mq-fix-20261015/ui-probe.ipc"
+    }
+  ],
+  "generated_directories": [
+    {
+      "name": "generated",
+      "path": "/home/zjh/wt-lab/records/simnow-03/run/generated",
+      "marker_exists": true
+    },
+    {
+      "name": "generated_offline",
+      "path": "/home/zjh/wt-lab/records/simnow-03/run/generated_offline",
+      "marker_exists": true
+    },
+    {
+      "name": "generated_online_observe_01",
+      "path": "/home/zjh/wt-lab/records/simnow-03/run/generated_online_observe_01",
+      "marker_exists": true
+    },
+    {
+      "name": "generated_online_observe_02",
+      "path": "/home/zjh/wt-lab/records/simnow-03/run/generated_online_observe_02",
+      "marker_exists": true
+    },
+    {
+      "name": "generated_online_roundtrip_01",
+      "path": "/home/zjh/wt-lab/records/simnow-03/run/generated_online_roundtrip_01",
+      "marker_exists": true
+    },
+    {
+      "name": "generated_online_roundtrip_02",
+      "path": "/home/zjh/wt-lab/records/simnow-03/run/generated_online_roundtrip_02",
+      "marker_exists": true
+    },
+    {
+      "name": "generated_online_roundtrip_03",
+      "path": "/home/zjh/wt-lab/records/simnow-03/run/generated_online_roundtrip_03",
+      "marker_exists": true
+    }
+  ],
+  "views": [
+    {
+      "name": "acceptance01",
+      "path": "/home/zjh/wt-lab/records/simnow-03/monitor/views/acceptance01",
+      "generated_is_symlink": false,
+      "registered": true
+    },
+    {
+      "name": "acceptance02",
+      "path": "/home/zjh/wt-lab/records/simnow-03/monitor/views/acceptance02",
+      "generated_is_symlink": false,
+      "registered": true
+    },
+    {
+      "name": "logcontrols",
+      "path": "/home/zjh/wt-lab/records/simnow-03/monitor/views/logcontrols",
+      "generated_is_symlink": false,
+      "registered": false
+    },
+    {
+      "name": "mqprobe",
+      "path": "/home/zjh/wt-lab/records/simnow-03/monitor/views/mqprobe",
+      "generated_is_symlink": false,
+      "registered": true
+    }
+  ],
+  "known_archive_copies": {
+    "acceptance01": "generated_online_roundtrip_01",
+    "acceptance02": "generated_online_roundtrip_03"
+  },
+  "active_pid": 11556,
+  "active_cwd": "/home/zjh/wt-lab/records/simnow-03/run",
+  "loaded_libraries": [
+    "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/libWtDataStorage.so",
+    "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/libWtMsgQue.so",
+    "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/libWtPorter.so",
+    "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/parsers/libParserUDP.so",
+    "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/traders/libTraderCTP.so",
+    "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/traders/thosttraderapi_se.so"
+  ],
+  "sdk_comparison": {
+    "deployed": "/home/zjh/wt-lab/records/simnow-03/runtime/wtpy/wrapper/linux/traders/thosttraderapi_se.so",
+    "sdk_original": "/home/zjh/wt-lab/records/simnow-01/sdk/v6.7.13_20260225_traderapi/v6.7.13_20260225_api_traderapi_linux64/v6.7.13_20260225_api/v6.7.13_20260225_api_traderapi_se_linux64/thosttraderapi_se.so",
+    "bytes": 5757703,
+    "byte_equal": true
+  }
+}
