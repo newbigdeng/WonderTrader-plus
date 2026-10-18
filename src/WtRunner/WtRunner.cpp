@@ -38,22 +38,34 @@ const char* getBinDir()
 
 
 WtRunner::WtRunner()
-	: _data_store(NULL)
+	: _config(NULL)
+	, _engine(NULL)
+	, _data_store(NULL)
 	, _is_hft(false)
 	, _is_sel(false)
 	, _to_exit(false)
+	, _stopped(false)
 {
-	install_signal_hooks([](const char* message) {
-		WTSLogger::error(message);
-	}, [this](bool bStopped) {
-		_to_exit = bStopped;
-		WTSLogger::info("Exit flag is {}", _to_exit);
-	});
+	install_shutdown_hooks();
 }
 
 
 WtRunner::~WtRunner()
 {
+	stop();
+	if (_config)
+		_config->release();
+}
+
+void WtRunner::stop()
+{
+	if (_stopped)
+		return;
+	_stopped = true;
+	_parsers.release();
+	if (_engine)
+		_engine->stop();
+	_traders.release();
 }
 
 void WtRunner::init(const std::string& filename)
@@ -589,10 +601,12 @@ void WtRunner::run(bool bAsync /* = false */)
 
 		if(!bAsync)
 		{
-			while(!_to_exit)
+			while(!_to_exit && !shutdown_requested())
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(10));
 			}
+			WTSLogger::info("Exit requested, stopping runner");
+			stop();
 		}
 	}
 	catch (...)

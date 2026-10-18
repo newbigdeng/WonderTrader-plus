@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtHftEngine.cpp
  * \project	WonderTrader
  *
@@ -126,7 +126,8 @@ WTSKlineSlice* WtUftEngine::get_kline_slice(uint32_t sid, const char* stdCode, c
 
 	WTSSessionInfo* sInfo = cInfo->getSessionInfo();
 
-	std::string key = fmt::format("{}-{}-{}", stdCode, period, times);
+	thread_local static char key[64] = { 0 };
+	fmtutil::format_to(key, "{}-{}-{}", stdCode, period, times);
 	SubList& sids = _bar_sub_map[key];
 	sids.insert(sid);
 
@@ -354,7 +355,10 @@ void WtUftEngine::on_tick(const char* stdCode, WTSTickData* curTick)
 void WtUftEngine::on_bar(const char* stdCode, const char* period, uint32_t times, WTSBarStruct* newBar)
 {
 	std::string key = fmt::format("{}-{}-{}", stdCode, period, times);
-	const SubList& sids = _bar_sub_map[key];
+	auto subscription = _bar_sub_map.find(key);
+	if (subscription == _bar_sub_map.end())
+		return;
+	const SubList& sids = subscription->second;
 	for (auto it = sids.begin(); it != sids.end(); it++)
 	{
 		uint32_t sid = *it;

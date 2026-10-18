@@ -58,6 +58,11 @@ void initialize(WtString cfgFile, WtString logCfg, bool bCfgFile, bool bLogCfgFi
 	getRunner().initialize(cfgFile, logCfg, getBinDir(), bCfgFile, bLogCfgFile);
 }
 
+void release_datakit()
+{
+	getRunner().release();
+}
+
 void start(bool bAsync/* = false*/)
 {
 	getRunner().start(bAsync);

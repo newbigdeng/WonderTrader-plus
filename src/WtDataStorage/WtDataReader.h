@@ -215,6 +215,7 @@ public:
 	virtual uint32_t getAdjustingFlag() override { return _adjust_flag; }
 
 private:
+	bool _replay = false;
 	std::string		_rt_dir;
 	std::string		_his_dir;
 	IBaseDataMgr*	_base_data_mgr;

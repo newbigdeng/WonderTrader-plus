@@ -1,4 +1,7 @@
-﻿/*!
+#ifdef _WIN32
+#error This isolated adapter is verified for Linux x86_64 only
+#endif
+/*!
  * \file TraderCTP.cpp
  * \project	WonderTrader
  *
@@ -71,6 +74,10 @@ extern "C"
 
 TraderCTP::TraderCTP()
 	: m_pUserAPI(NULL)
+	, m_funcCreator(NULL)
+	, m_hInstCTP(NULL)
+	, m_sink(NULL)
+	, m_bdMgr(NULL)
 	, m_mapPosition(NULL)
 	, m_ayOrders(NULL)
 	, m_ayTrades(NULL)
@@ -88,6 +95,7 @@ TraderCTP::TraderCTP()
 
 TraderCTP::~TraderCTP()
 {
+	release();
 }
 
 bool TraderCTP::init(WTSVariant* params)
@@ -127,6 +135,7 @@ bool TraderCTP::init(WTSVariant* params)
 	m_strModule = getBinDir() + DLLHelper::wrap_module(module.c_str(), "");
 
 	m_hInstCTP = DLLHelper::load_library(m_strModule.c_str());
+	if (!m_hInstCTP) return false;
 #ifdef _WIN32
 #	ifdef _WIN64
 	const char* creatorName = "?CreateFtdcTraderApi@CThostFtdcTraderApi@@SAPEAV1@PEBD@Z";
@@ -134,9 +143,10 @@ bool TraderCTP::init(WTSVariant* params)
 	const char* creatorName = "?CreateFtdcTraderApi@CThostFtdcTraderApi@@SAPAV1@PBD@Z";
 #	endif
 #else
-	const char* creatorName = "_ZN19CThostFtdcTraderApi19CreateFtdcTraderApiEPKc";
+	const char* creatorName = "_ZN19CThostFtdcTraderApi19CreateFtdcTraderApiEPKcb";
 #endif
 	m_funcCreator = (CTPCreator)DLLHelper::get_symbol(m_hInstCTP, creatorName);
+	if (!m_funcCreator) return false;
 
 	m_bQuickStart = params->getBoolean("quick");
 
@@ -146,6 +156,9 @@ bool TraderCTP::init(WTSVariant* params)
 void TraderCTP::release()
 {
 	m_bStopped = true;
+	if (m_thrdWorker && m_thrdWorker->joinable())
+		m_thrdWorker->join();
+	m_thrdWorker.reset();
 
 	if (m_pUserAPI)
 	{
@@ -172,7 +185,9 @@ void TraderCTP::connect()
 	std::stringstream ss;
 	ss << m_strFlowDir << "flows/" << m_strBroker << "/" << m_strUser << "/";
 	boost::filesystem::create_directories(ss.str().c_str());
-	m_pUserAPI = m_funcCreator(ss.str().c_str());
+	if (!m_funcCreator) return;
+	m_pUserAPI = m_funcCreator(ss.str().c_str(), true);
+	if (!m_pUserAPI) return;
 	m_pUserAPI->RegisterSpi(this);
 	if (m_bQuickStart)
 	{

@@ -595,7 +595,7 @@ uint32_t HisDataReplayer::locate_barindex(const std::string& key, uint64_t now, 
 	curTime = (uint32_t)(now % 10000);
 
 	BarsListPtr& barsList = _bars_cache[key];
-	if (barsList == NULL)
+	if (barsList == NULL || barsList->_bars.empty())
 		return UINT32_MAX;
 
 	bool isDay = (barsList->_period == KP_DAY);
@@ -612,13 +612,15 @@ uint32_t HisDataReplayer::locate_barindex(const std::string& key, uint64_t now, 
 
 	std::size_t idx;
 	if (it == barsList->_bars.end())
-		idx = barsList->_bars.size() - 1;
+		return bUpperBound ? static_cast<uint32_t>(barsList->_bars.size() - 1) : UINT32_MAX;
 	else
 	{
 		if(bUpperBound)
 		{//如果是找上边界，则要比较时间向下修正，因为lower_bound函数找的是大于等于curTime的K线
 			if ((isDay && it->date > bar.date) || (!isDay && it->time > bar.time))
 			{
+				if (it == barsList->_bars.begin())
+					return UINT32_MAX;
 				it--;
 			}
 		}
@@ -781,13 +783,24 @@ void HisDataReplayer::run_by_bars(bool bNeedDump /* = false */)
 	uint32_t sIdx = locate_barindex(_main_key, _begin_time, false);
 	uint32_t eIdx = locate_barindex(_main_key, _end_time, true);
 
+	if (sIdx == UINT32_MAX || eIdx == UINT32_MAX || sIdx > eIdx)
+	{
+		WTSLogger::error("No main bars overlap requested backtest range [{},{}]", _begin_time, _end_time);
+		notify_state(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, 0);
+		if (bNeedDump)
+			dump_btstate(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, 0, ticker.nano_seconds());
+		_listener->handle_replay_done();
+		if (_notifier) _notifier->notifyEvent("BT_END");
+		return;
+	}
+
 	uint32_t total_barcnt = eIdx - sIdx + 1;
 	uint32_t replayed_barcnt = 0;
 
 	notify_state(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, 0);
 
 	if (bNeedDump)
-		dump_btstate(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, 100.0, ticker.nano_seconds());
+		dump_btstate(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, 0.0, ticker.nano_seconds());
 
 	WTSLogger::info("Start to replay back data from {}...", _begin_time);
 
@@ -920,7 +933,8 @@ void HisDataReplayer::run_by_bars(bool bNeedDump /* = false */)
 	if (_terminated)
 		WTSLogger::debug("Replaying by bars terminated forcely");
 
-	notify_state(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, 100);
+	const double final_progress = _terminated ? std::min(99.99, replayed_barcnt * 100.0 / total_barcnt) : 100.0;
+	notify_state(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, final_progress);
 	if (_notifier)
 		_notifier->notifyEvent("BT_END");
 
@@ -932,7 +946,7 @@ void HisDataReplayer::run_by_bars(bool bNeedDump /* = false */)
 
 	if (bNeedDump)
 	{
-		dump_btstate(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, 100.0, ticker.nano_seconds());
+		dump_btstate(barsList->_code.c_str(), barsList->_period, barsList->_times, _begin_time, _end_time, final_progress, ticker.nano_seconds());
 	}
 
 	_listener->handle_replay_done();

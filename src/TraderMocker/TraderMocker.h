@@ -1,18 +1,25 @@
-﻿#pragma once
+#pragma once
 #include <atomic>
+#include <vector>
+#include <map>
+#include <fstream>
 
 #include <boost/asio.hpp>
 #include <boost/array.hpp>
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 
 #include "../Includes/FasterDefs.h"
 #include "../Includes/ITraderApi.h"
 #include "../Share/StdUtils.hpp"
 #include "../Includes/WTSCollection.hpp"
+#include "../Includes/WTSStruct.h"
 
 
 NS_WTP_BEGIN
 	class WTSTickData;
+	struct WTSTickStruct;
+	class WTSOrderInfo;
+	class WTSTradeInfo;
 NS_WTP_END
 
 USING_NS_WTP;
@@ -41,7 +48,7 @@ private:
 
 private:
 	StdThreadPtr	_thrd_match;
-	bool			_terminated;
+	std::atomic<bool>	_terminated;
 
 	StdUniqueMutex		_mutex_api;
 
@@ -74,11 +81,11 @@ private:
 	uint64_t		_max_tick_time;
 	uint64_t		_last_match_time;
 
-	typedef struct _PosUnit
-	{
-		double	_volume;
-		double	_frozen;
-	} PosUnit;
+struct Lot { double volume = 0, frozen = 0, price = 0; uint32_t date = 0; };
+	struct PosUnit {
+		double _volume = 0, _frozen = 0;
+		std::vector<Lot> lots;
+	};
 
 	typedef struct _PosItem
 	{
@@ -90,18 +97,47 @@ private:
 
 		_PosItem()
 		{
-			memset(this, 0, sizeof(_PosItem));
+			memset(_exchg, 0, sizeof(_exchg));
+			memset(_code, 0, sizeof(_code));
 		}
 	} PosItem;
 
 	wt_hashmap<std::string, PosItem> _positions;
 	std::string		_pos_file;
+	struct FeeSpec { bool byvolume; double open, close, today, minimum; };
+	struct CloseSlice { size_t lot; double volume; bool today; };
+	struct Reservation {
+		double margin = 0, commission = 0, volume = 0;
+		std::vector<CloseSlice> closes;
+	};
+	struct Account {
+		double balance = 0, equity = 0, realized = 0, unrealized = 0;
+		double commission = 0, margin = 0, frozen_margin = 0, frozen_commission = 0, available = 0;
+	};
+	double _capital = 0, _realized = 0, _commission = 0, _margin_rate = -1;
+	uint32_t _slippage_ticks = 0;
+	std::map<std::string, FeeSpec> _fees;
+	std::map<std::string, Reservation> _reservations;
+	std::map<std::string, WTSTickStruct> _marks;
+	std::ofstream _funds;
+	const FeeSpec* feeSpec(WTSContractInfo* ct) const;
+	double fee(WTSContractInfo* ct, double price, double qty, uint32_t offset, bool applyMinimum = true);
+	double marginRate(WTSContractInfo* ct, bool isLong) const;
+	double markPrice(WTSContractInfo* ct, double fallback = 0) const;
+	Account account() const;
+	bool reserve(WTSEntrust* entrust, WTSContractInfo* ct, Reservation& value, std::string& message);
+	void unfreeze(WTSOrderInfo* order);
+	bool settle(WTSOrderInfo* order, double price, double qty, double& feePaid, double& profit);
+	void writeAccount(bool checkpoint = true);
+	void auditReject(WTSEntrust* entrust, const char* error, const char* code);
+	double _audit_fee = 0, _audit_profit = 0, _audit_quote = 0;
+
 
 private:
 	int			_udp_port;
 
 	boost::asio::ip::udp::endpoint	_broad_ep;
-	boost::asio::io_service			_io_service;
+	boost::asio::io_context			_io_service;
 
 	boost::asio::ip::udp::socket*	_b_socket;
 
@@ -117,6 +153,15 @@ private:
 //ITraderApi
 public:
 	virtual bool init(WTSVariant *params) override;
+	// Plus replay uses the same matcher/API worker, with no UDP socket or wall timer.
+	void replayAudit(const char* type, WTSOrderInfo* order = nullptr, WTSTradeInfo* trade = nullptr, const char* error = "");
+	int replayStep(const WTSTickStruct* tick);
+	bool replayBarrier();
+	void replayDateTime(uint32_t& date, uint32_t& time) const;
+	bool _replay = false;
+	std::atomic<uint32_t> _replay_date{0}, _replay_time{0};
+	uint32_t _replay_tdate = 0;
+
 
 	virtual void release() override;
 

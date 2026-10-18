@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file UDPCaster.h
  * \project	WonderTrader
  *
@@ -8,6 +8,7 @@
  * \brief UDP广播对象定义
  */
 #pragma once
+#include <atomic>
 #include "IDataCaster.h"
 #include "../Includes/WTSObject.hpp"
 #include "../Share/StdUtils.hpp"
@@ -93,13 +94,13 @@ private:
 	MulticastList	m_listFlatGroup;
 	MulticastList	m_listJsonGroup;
 	MulticastList	m_listRawGroup;
-	boost::asio::io_service		m_ioservice;
+	boost::asio::io_context		m_ioservice;
 	StdThreadPtr	m_thrdIO;
 
 	StdThreadPtr	m_thrdCast;
 	StdCondVariable	m_condCast;
 	StdUniqueMutex	m_mtxCast;
-	bool			m_bTerminated;
+	std::atomic<bool>	m_bTerminated;
 
 	WTSBaseDataMgr*	m_bdMgr;
 	DataManager*	m_dtMgr;

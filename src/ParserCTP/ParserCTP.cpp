@@ -1,4 +1,7 @@
-﻿/*!
+#ifdef _WIN32
+#error This isolated adapter is verified for Linux x86_64 only
+#endif
+/*!
  * \file ParserCTP.cpp
  * \project	WonderTrader
  *
@@ -83,6 +86,10 @@ inline double checkValid(double val)
 
 ParserCTP::ParserCTP()
 	:m_pUserAPI(NULL)
+	,m_funcCreator(NULL)
+	,m_hInstCTP(NULL)
+	,m_sink(NULL)
+	,m_pBaseDataMgr(NULL)
 	,m_iRequestID(0)
 	,m_uTradingDate(0)
     ,m_bLocaltime(false)
@@ -121,6 +128,7 @@ bool ParserCTP::init(WTSVariant* config)
 
 	std::string dllpath = getBinDir() + DLLHelper::wrap_module(module.c_str(), "");
 	m_hInstCTP = DLLHelper::load_library(dllpath.c_str());
+	if (!m_hInstCTP) return false;
 	std::string path = StrUtil::printf("%s%s/%s/", m_strFlowDir.c_str(), m_strBroker.c_str(), m_strUserID.c_str());
 	if (!StdFile::exists(path.c_str()))
 	{
@@ -133,10 +141,12 @@ bool ParserCTP::init(WTSVariant* config)
 	const char* creatorName = "?CreateFtdcMdApi@CThostFtdcMdApi@@SAPAV1@PBD_N1@Z";
 #	endif
 #else
-	const char* creatorName = "_ZN15CThostFtdcMdApi15CreateFtdcMdApiEPKcbb";
+	const char* creatorName = "_ZN15CThostFtdcMdApi15CreateFtdcMdApiEPKcbbb";
 #endif
 	m_funcCreator = (CTPCreator)DLLHelper::get_symbol(m_hInstCTP, creatorName);
-	m_pUserAPI = m_funcCreator(path.c_str(), false, false);
+	if (!m_funcCreator) return false;
+	m_pUserAPI = m_funcCreator(path.c_str(), false, false, true);
+	if (!m_pUserAPI) return false;
 	m_pUserAPI->RegisterSpi(this);
 	m_pUserAPI->RegisterFront((char*)m_strFrontAddr.c_str());
 

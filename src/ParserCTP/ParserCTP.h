@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file ParserCTP.h
  * \project	WonderTrader
  *
@@ -10,7 +10,7 @@
 #pragma once
 #include "../Includes/IParserApi.h"
 #include "../Share/DLLHelper.hpp"
-#include "../API/CTP6.3.15/ThostFtdcMdApi.h"
+#include "../API/CTP6.7.13-mduserapi/ThostFtdcMdApi.h"
 #include <map>
 
 NS_WTP_BEGIN
@@ -106,7 +106,7 @@ private:
 	IBaseDataMgr*		m_pBaseDataMgr;
 
 	DllHandle		m_hInstCTP;
-	typedef CThostFtdcMdApi* (*CTPCreator)(const char *, const bool, const bool);
+	typedef CThostFtdcMdApi* (*CTPCreator)(const char *, const bool, const bool, bool);
 	CTPCreator		m_funcCreator;
 };
 

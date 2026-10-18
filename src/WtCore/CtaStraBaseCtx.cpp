@@ -276,6 +276,12 @@ void CtaStraBaseCtx::load_userdata()
 	}
 }
 
+void CtaStraBaseCtx::flush_state()
+{
+	save_data();
+	save_userdata();
+}
+
 void CtaStraBaseCtx::load_data(uint32_t flag /* = 0xFFFFFFFF */)
 {
 	std::string filename = WtHelper::getStraDataDir();

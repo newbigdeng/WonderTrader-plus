@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtDtRunner.cpp
  * \project	WonderTrader
  *
@@ -39,6 +39,18 @@ WtDtRunner::~WtDtRunner()
 {
 }
 
+void WtDtRunner::release()
+{
+	if (_released.exchange(true)) return;
+	_to_exit = true;
+	_async_io.stop();
+	_parsers.release();
+	_state_mon.stop();
+	_data_mgr.release();
+	_udp_caster.stop();
+	WTSLogger::stop();
+}
+
 void WtDtRunner::start(bool bAsync /* = false */, bool bAlldayMode /* = false */)
 {
 	_parsers.run();
@@ -55,7 +67,7 @@ void WtDtRunner::start(bool bAsync /* = false */, bool bAlldayMode /* = false */
 			WTSLogger::info("Exit flag is {}", _to_exit);
 		});
 
-		_async_io.post([this, bAlldayMode]() {
+		boost::asio::post(_async_io, [this, bAlldayMode]() {
 			if(!bAlldayMode)
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(5));

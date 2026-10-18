@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include "WtEngine.h"
 #include "WtExecMgr.h"
 
@@ -52,6 +52,7 @@ public:
 	virtual void init(WTSVariant* cfg, IBaseDataMgr* bdMgr, WtDtMgr* dataMgr, IHotMgr* hotMgr, EventNotifier* notifier) override;
 
 	virtual void run() override;
+	virtual void stop() override;
 
 	virtual void on_tick(const char* stdCode, WTSTickData* curTick) override;
 
@@ -96,8 +97,6 @@ private:
 	ContextMap		_ctx_map;
 
 	WtExecuterMgr	_exec_mgr;
-
-	bool	_terminated;
 
 	WtSelRtTicker*	_tm_ticker;
 	WTSVariant*		_cfg;

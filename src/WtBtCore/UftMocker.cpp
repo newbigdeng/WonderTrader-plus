@@ -232,60 +232,28 @@ void UftMocker::on_tick(const char* stdCode, WTSTickData* newTick)
 
 	update_dyn_profit(stdCode, newTick);
 	
-	//如果开启了同tick撮合，则先触发策略的ontick，再处理订单
-	//如果没开启同tick撮合，则先处理订单，再触发策略的ontick
-	if(_match_this_tick)
+	auto match_orders = [this]() {
+		StdLocker<StdRecurMutex> lock(_mtx_ords);
+		OrderIDs ids;
+		ids.reserve(_orders.size());
+		for (const auto& item : _orders)
+			ids.emplace_back(item.first);
+		// Orders created by matching callbacks wait for the next matching pass.
+		for (uint32_t localid : ids)
+			if (procOrder(localid))
+				_orders.erase(localid);
+	};
+	// Same-tick mode includes the orders submitted by this tick's strategy callback.
+	if (_match_this_tick)
 	{
 		on_tick_updated(stdCode, newTick);
-
 		procTask();
-
-		if (!_orders.empty())
-		{
-			OrderIDs ids;
-			for (auto it = _orders.begin(); it != _orders.end(); it++)
-			{
-				uint32_t localid = it->first;
-				ids.emplace_back(localid);
-			}
-
-			OrderIDs to_erase;
-			for (uint32_t localid : ids)
-			{
-				bool bNeedErase = procOrder(localid);
-				if (bNeedErase)
-					to_erase.emplace_back(localid);
-			}
-
-			for (uint32_t localid : to_erase)
-			{
-				auto it = _orders.find(localid);
-				_orders.erase(it);
-			}
-		}
+		match_orders();
 	}
 	else
 	{
-		if (!_orders.empty())
-		{
-			OrderIDs ids;
-			for (auto it = _orders.begin(); it != _orders.end(); it++)
-			{
-				uint32_t localid = it->first;
-				bool bNeedErase = procOrder(localid);
-				if (bNeedErase)
-					ids.emplace_back(localid);
-			}
-
-			for (uint32_t localid : ids)
-			{
-				auto it = _orders.find(localid);
-				_orders.erase(it);
-			}
-		}
-
+		match_orders();
 		on_tick_updated(stdCode, newTick);
-
 		procTask();
 	}
 }
@@ -346,22 +314,19 @@ void UftMocker::on_init()
 
 void UftMocker::on_session_begin(uint32_t curTDate)
 {
-	//每个交易日开始，要把冻结持仓置零
-	for (auto& it : _pos_map)
+	// Roll both directions every session, including positions with no frozen quantity.
+	for (auto& item : _pos_map)
 	{
-		const char* stdCode = it.first.c_str();
-		PosItem& pInfo = (PosItem&)it.second;
-		if (!decimal::eq(pInfo.frozen(), 0))
+		for (PosItem* side : { &item.second._long, &item.second._short })
 		{
-			log_debug("{} frozen of {} released on {}", pInfo.frozen(), stdCode, curTDate);
-			pInfo._prevol += pInfo._newvol;
-			pInfo._preavail = pInfo._prevol;
-
-			pInfo._newvol = 0;
-			pInfo._newavail = 0;
+			if (!decimal::eq(side->frozen(), 0))
+				log_debug("{} frozen of {} released on {}", side->frozen(), item.first.c_str(), curTDate);
+			side->_prevol += side->_newvol;
+			side->_preavail = side->_prevol;
+			side->_newvol = 0;
+			side->_newavail = 0;
 		}
 	}
-
 	_strategy->on_session_begin(this, curTDate);
 }
 
@@ -385,7 +350,7 @@ void UftMocker::on_session_end(uint32_t curTDate)
 			_pos_logs << fmt::format("{},{},LONG,{},{:.2f},{:.2f}\n", curTDate, stdCode, pInfo._long.volume(), pInfo._long._closeprofit, pInfo._long._dynprofit);
 
 		if (!decimal::eq(pInfo._short.volume(), 0.0))
-			_pos_logs << fmt::format("{},{},LONG,{},{:.2f},{:.2f}\n", curTDate, stdCode, pInfo._short.volume(), pInfo._short._closeprofit, pInfo._short._dynprofit);
+			_pos_logs << fmt::format("{},{},SHORT,{},{:.2f},{:.2f}\n", curTDate, stdCode, pInfo._short.volume(), pInfo._short._closeprofit, pInfo._short._dynprofit);
 	}
 
 	_fund_logs << fmt::format("{},{:.2f},{:.2f},{:.2f},{:.2f}\n", curDate,
@@ -401,7 +366,8 @@ double UftMocker::stra_get_undone(const char* stdCode)
 		const OrderInfo& ordInfo = it->second;
 		if (strcmp(ordInfo._code, stdCode) == 0)
 		{
-			ret += ordInfo._left * ordInfo._isLong ? 1 : -1;
+			const bool isBuy = ordInfo._isLong == (ordInfo._offset == 0);
+			ret += ordInfo._left * (isBuy ? 1 : -1);
 		}
 	}
 
@@ -905,14 +871,18 @@ bool UftMocker::procOrder(uint32_t localid)
 	if (curTick == NULL)
 		return false;
 
+	const bool isBuy = ordInfo._isLong == (ordInfo._offset == 0);
 	double curPx = curTick->price();
-	double orderQty = ordInfo._isLong ? curTick->askqty(0) : curTick->bidqty(0);	//看对手盘的数量
+	double orderQty = isBuy ? curTick->askqty(0) : curTick->bidqty(0);	//看对手盘的数量
 	if (decimal::eq(orderQty, 0.0))
+	{
+		curTick->release();
 		return false;
+	}
 
 	if (!_use_newpx)
 	{
-		curPx = ordInfo._isLong ? curTick->askprice(0) : curTick->bidprice(0);
+		curPx = isBuy ? curTick->askprice(0) : curTick->bidprice(0);
 		//if (curPx == 0.0)
 		if(decimal::eq(curPx, 0.0))
 		{
@@ -925,13 +895,13 @@ bool UftMocker::procOrder(uint32_t localid)
 	//如果没有成交条件,则退出逻辑
 	if(!decimal::eq(ordInfo._price, 0.0))
 	{
-		if(ordInfo._isLong && decimal::gt(curPx, ordInfo._price))
+		if(isBuy && decimal::gt(curPx, ordInfo._price))
 		{
 			//买单,但是当前价大于限价,不成交
 			return false;
 		}
 
-		if (!ordInfo._isLong && decimal::lt(curPx, ordInfo._price))
+		if (!isBuy && decimal::lt(curPx, ordInfo._price))
 		{
 			//卖单,但是当前价小于限价,不成交
 			return false;
@@ -948,6 +918,10 @@ bool UftMocker::procOrder(uint32_t localid)
 		on_trade(ordInfo._localid, ordInfo._code, ordInfo._isLong, ordInfo._offset, curQty, curPx);
 
 		ordInfo._left -= curQty;
+		// Keep a local copy across user callbacks; insertion may rehash the order map.
+		auto remaining = _orders.find(localid);
+		if (remaining != _orders.end())
+			remaining->second._left = ordInfo._left;
 		on_order(localid, ordInfo._code, ordInfo._isLong, ordInfo._offset, ordInfo._total, ordInfo._left, ordInfo._price, false);
 	}
 

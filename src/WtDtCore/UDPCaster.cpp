@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file UDPCaster.cpp
  * \project	WonderTrader
  *
@@ -57,6 +57,7 @@ UDPCaster::UDPCaster()
 
 UDPCaster::~UDPCaster()
 {
+	stop();
 }
 
 bool UDPCaster::init(WTSVariant* cfg, WTSBaseDataMgr* bdMgr, DataManager* dtMgr)
@@ -132,14 +133,23 @@ void UDPCaster::start(int sport)
 
 void UDPCaster::stop()
 {
-	m_bTerminated = true;
-	m_ioservice.stop();
-	if (m_thrdIO)
-		m_thrdIO->join();
-
+	{
+		StdUniqueLock lock(m_mtxCast);
+		m_bTerminated = true;
+	}
 	m_condCast.notify_all();
-	if (m_thrdCast)
+	if (m_thrdCast && m_thrdCast->joinable())
 		m_thrdCast->join();
+	m_thrdCast.reset();
+	m_ioservice.stop();
+	if (m_thrdIO && m_thrdIO->joinable())
+		m_thrdIO->join();
+	m_thrdIO.reset();
+	m_sktSubscribe.reset();
+	m_sktBroadcast.reset();
+	m_listFlatGroup.clear();
+	m_listJsonGroup.clear();
+	m_listRawGroup.clear();
 }
 
 void UDPCaster::do_receive()
@@ -223,7 +233,7 @@ bool UDPCaster::addBRecver(const char* remote, int port, int type /* = 0 */)
 {
 	try
 	{
-		boost::asio::ip::address_v4 addr = boost::asio::ip::address_v4::from_string(remote);
+		boost::asio::ip::address_v4 addr = boost::asio::ip::make_address_v4(remote);
 		UDPReceiverPtr item(new UDPReceiver(EndPoint(addr, port), type));
 		if(type == 0)
 			m_listFlatRecver.emplace_back(item);
@@ -245,7 +255,7 @@ bool UDPCaster::addMRecver(const char* remote, int port, int sendport, int type 
 {
 	try
 	{
-		boost::asio::ip::address_v4 addr = boost::asio::ip::address_v4::from_string(remote);
+		boost::asio::ip::address_v4 addr = boost::asio::ip::make_address_v4(remote);
 		UDPReceiverPtr item(new UDPReceiver(EndPoint(addr, port), type));
 		UDPSocketPtr sock(new UDPSocket(m_ioservice, boost::asio::ip::udp::endpoint(boost::asio::ip::udp::v4(), sendport)));
 		boost::asio::ip::multicast::join_group option(item->_ep.address());
@@ -292,6 +302,8 @@ void UDPCaster::do_broadcast(WTSObject* data, uint32_t dataType)
 
 	{
 		StdUniqueLock lock(m_mtxCast);
+		if (m_bTerminated)
+			return;
 		m_dataQue.push(CastData(data, dataType));
 	}
 
@@ -299,18 +311,14 @@ void UDPCaster::do_broadcast(WTSObject* data, uint32_t dataType)
 	{
 		m_thrdCast.reset(new StdThread([this](){
 
-			while (!m_bTerminated)
+			for (;;)
 			{
-				if(m_dataQue.empty())
-				{
-					StdUniqueLock lock(m_mtxCast);
-					m_condCast.wait(lock);
-					continue;
-				}	
-
 				std::queue<CastData> tmpQue;
 				{
 					StdUniqueLock lock(m_mtxCast);
+					m_condCast.wait(lock, [this]{ return m_bTerminated || !m_dataQue.empty(); });
+					if (m_dataQue.empty())
+						break;
 					tmpQue.swap(m_dataQue);
 				}
 				

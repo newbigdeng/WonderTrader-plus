@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file EventCaster.cpp
  * \project	WonderTrader
  *
@@ -26,7 +26,7 @@ namespace rj = rapidjson;
 
 USING_NS_WTP;
 
-void on_mq_log(unsigned long id, const char* message, bool bServer)
+void on_mq_log(uint32_t id, const char* message, bool bServer)
 {
 
 }
@@ -45,13 +45,23 @@ EventNotifier::EventNotifier()
 
 EventNotifier::~EventNotifier()
 {
-	// Unblock the guarded event loop before waiting for its worker.
-	_asyncio.stop();
-	if (_worker)
-		_worker->join();
+	stop();
+}
 
-	if (_remover && _mq_sid != 0)
-		_remover(_mq_sid);
+void EventNotifier::stop()
+{
+	if (_stopped.exchange(true)) return;
+	if (_worker && _worker->joinable())
+	{
+		// Producers have stopped. Drain events queued before this barrier.
+		if (!_asyncio.stopped())
+			boost::asio::post(_asyncio, [this]() { _asyncio.stop(); });
+		_worker->join();
+	}
+	_worker.reset();
+	_asyncio.stop();
+	if (_remover && _mq_sid != 0) _remover(_mq_sid);
+	_mq_sid = 0;
 }
 
 bool EventNotifier::init(WTSVariant* cfg)
@@ -86,11 +96,23 @@ bool EventNotifier::init(WTSVariant* cfg)
 	_publisher = (FundPublishMessage)DLLHelper::get_symbol(dllInst, "publish_message");
 	_register = (FuncRegCallbacks)DLLHelper::get_symbol(dllInst, "regiter_callbacks");
 
+	if (!_remover || !_publisher || !_register)
+	{
+		DLLHelper::free_library(dllInst);
+		_creator = nullptr;
+		_remover = nullptr;
+		_publisher = nullptr;
+		_register = nullptr;
+		WTSLogger::error("MQ module {} is missing required C ABI exports", dllpath.c_str());
+		return false;
+	}
+
 	//注册回调函数
 	_register(on_mq_log);
 	
 	//创建一个MQServer
-	_mq_sid = _creator(_url.c_str());
+	_mq_sid = _creator(_url.c_str(), false);
+	if (_mq_sid == 0) return false;
 
 	WTSLogger::info("EventNotifier initialized with channel {}", _url.c_str());
 
@@ -98,7 +120,7 @@ bool EventNotifier::init(WTSVariant* cfg)
 	{
 		_worker.reset(new StdThread([this]() {
 			// Keep the service alive for the entire worker lifetime, including idle periods.
-			boost::asio::io_service::work work(_asyncio);
+			auto work = boost::asio::make_work_guard(_asyncio);
 			_asyncio.run();
 		}));
 	}
@@ -108,12 +130,13 @@ bool EventNotifier::init(WTSVariant* cfg)
 
 void EventNotifier::notify_log(const char* tag, const char* message)
 {
+	if (_stopped.load()) return;
 	if (_mq_sid == 0)
 		return;
 
 	std::string strTag = tag;
 	std::string strMsg = message;
-	_asyncio.post([this, strTag, strMsg]() {
+	boost::asio::post(_asyncio, [this, strTag, strMsg]() {
 		std::string data;
 		{
 			rj::Document root(rj::kObjectType);
@@ -131,17 +154,18 @@ void EventNotifier::notify_log(const char* tag, const char* message)
 		}
 
 		if (_publisher)
-			_publisher(_mq_sid, "LOG", data.c_str(), (unsigned long)data.size());
+			_publisher(_mq_sid, "LOG", data.c_str(), static_cast<uint32_t>(data.size()));
 	});
 }
 
 void EventNotifier::notify_event(const char* message)
 {
+	if (_stopped.load()) return;
 	if (_mq_sid == 0)
 		return;
 
 	std::string strMsg = message;
-	_asyncio.post([this, strMsg]() {
+	boost::asio::post(_asyncio, [this, strMsg]() {
 		std::string data;
 		{
 			rj::Document root(rj::kObjectType);
@@ -157,18 +181,19 @@ void EventNotifier::notify_event(const char* message)
 			data = sb.GetString();
 		}
 		if (_publisher)
-			_publisher(_mq_sid, "GRP_EVENT", data.c_str(), (unsigned long)data.size());
+			_publisher(_mq_sid, "GRP_EVENT", data.c_str(), static_cast<uint32_t>(data.size()));
 	});
 }
 
 void EventNotifier::notify(const char* trader, const char* message)
 {
+	if (_stopped.load()) return;
 	if (_mq_sid == 0)
 		return;
 
 	std::string strTrader = trader;
 	std::string strMsg = message;
-	_asyncio.post([this, strTrader, strMsg]() {
+	boost::asio::post(_asyncio, [this, strTrader, strMsg]() {
 		std::string data;
 		{
 			rj::Document root(rj::kObjectType);
@@ -185,40 +210,42 @@ void EventNotifier::notify(const char* trader, const char* message)
 			data = sb.GetString();
 		}
 		if (_publisher)
-			_publisher(_mq_sid, "TRD_NOTIFY", data.c_str(), (unsigned long)data.size());
+			_publisher(_mq_sid, "TRD_NOTIFY", data.c_str(), static_cast<uint32_t>(data.size()));
 	});
 }
 
 void EventNotifier::notify(const char* trader, uint32_t localid, const char* stdCode, WTSTradeInfo* trdInfo)
 {
+	if (_stopped.load()) return;
 	if (trdInfo == NULL || _mq_sid == 0)
 		return;
 
 	std::string strTrader = trader;
 	std::string strCode = stdCode;
 	trdInfo->retain();
-	_asyncio.post([this, strTrader, strCode, localid, trdInfo]() {
+	boost::asio::post(_asyncio, [this, strTrader, strCode, localid, trdInfo]() {
 		std::string data;
 		tradeToJson(strTrader.c_str(), localid, strCode.c_str(), trdInfo, data);
 		if (_publisher)
-			_publisher(_mq_sid, "TRD_TRADE", data.c_str(), (unsigned long)data.size());
+			_publisher(_mq_sid, "TRD_TRADE", data.c_str(), static_cast<uint32_t>(data.size()));
 		trdInfo->release();
 	});
 }
 
 void EventNotifier::notify(const char* trader, uint32_t localid, const char* stdCode, WTSOrderInfo* ordInfo)
 {
+	if (_stopped.load()) return;
 	if (ordInfo == NULL || _mq_sid == 0)
 		return;
 
 	std::string strTrader = trader;
 	std::string strCode = stdCode;
 	ordInfo->retain();
-	_asyncio.post([this, strTrader, strCode, localid, ordInfo]() {
+	boost::asio::post(_asyncio, [this, strTrader, strCode, localid, ordInfo]() {
 		std::string data;
 		orderToJson(strTrader.c_str(), localid, strCode.c_str(), ordInfo, data);
 		if (_publisher)
-			_publisher(_mq_sid, "TRD_ORDER", data.c_str(), (unsigned long)data.size());
+			_publisher(_mq_sid, "TRD_ORDER", data.c_str(), static_cast<uint32_t>(data.size()));
 		ordInfo->release();
 	});
 
@@ -302,13 +329,14 @@ void EventNotifier::orderToJson(const char* trader, uint32_t localid, const char
 
 void EventNotifier::notify_chart_index(uint64_t time, const char* straId, const char* idxName, const char* lineName, double val)
 {
+	if (_stopped.load()) return;
 	if (_mq_sid == 0)
 		return;
 
 	std::string sid = straId;
 	std::string iname = idxName;
 	std::string lname = lineName;
-	_asyncio.post([this, time, sid, iname, lname, val]() {
+	boost::asio::post(_asyncio, [this, time, sid, iname, lname, val]() {
 		std::string data;
 		{
 			rj::Document root(rj::kObjectType);
@@ -327,19 +355,20 @@ void EventNotifier::notify_chart_index(uint64_t time, const char* straId, const 
 			data = sb.GetString();
 		}
 		if (_publisher)
-			_publisher(_mq_sid, "CHART_INDEX", data.c_str(), (unsigned long)data.size());
+			_publisher(_mq_sid, "CHART_INDEX", data.c_str(), static_cast<uint32_t>(data.size()));
 	});
 }
 
 void EventNotifier::notify_chart_marker(uint64_t time, const char* straId, double price, const char* icon, const char* tag)
 {
+	if (_stopped.load()) return;
 	if (_mq_sid == 0)
 		return;
 
 	std::string sid = straId;
 	std::string sIcon = icon;
 	std::string sTag = tag;
-	_asyncio.post([this, time, sid, sIcon, sTag, price]() {
+	boost::asio::post(_asyncio, [this, time, sid, sIcon, sTag, price]() {
 		std::string data;
 		{
 			rj::Document root(rj::kObjectType);
@@ -358,19 +387,20 @@ void EventNotifier::notify_chart_marker(uint64_t time, const char* straId, doubl
 			data = sb.GetString();
 		}
 		if (_publisher)
-			_publisher(_mq_sid, "CHART_MARKER", data.c_str(), (unsigned long)data.size());
+			_publisher(_mq_sid, "CHART_MARKER", data.c_str(), static_cast<uint32_t>(data.size()));
 	});
 }
 
 void EventNotifier::notify_trade(const char* straId, const char* stdCode, bool isLong, bool isOpen, uint64_t curTime, double price, const char* userTag)
 {
+	if (_stopped.load()) return;
 	if (_mq_sid == 0)
 		return;
 
 	std::string sid = straId;
 	std::string code = stdCode;
 	std::string tag = userTag;
-	_asyncio.post([this, sid, code, tag, isLong, isOpen, curTime, price]() {
+	boost::asio::post(_asyncio, [this, sid, code, tag, isLong, isOpen, curTime, price]() {
 		std::string data;
 		{
 			rj::Document root(rj::kObjectType);
@@ -391,6 +421,6 @@ void EventNotifier::notify_trade(const char* straId, const char* stdCode, bool i
 			data = sb.GetString();
 		}
 		if (_publisher)
-			_publisher(_mq_sid, "STRA_TRADE", data.c_str(), (unsigned long)data.size());
+			_publisher(_mq_sid, "STRA_TRADE", data.c_str(), static_cast<uint32_t>(data.size()));
 	});
 }

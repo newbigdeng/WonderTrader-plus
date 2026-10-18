@@ -41,6 +41,7 @@ ParserAdapter::ParserAdapter(WTSBaseDataMgr * bgMgr, DataManager* dtMgr, IndexFa
 
 ParserAdapter::~ParserAdapter()
 {
+	release();
 }
 
 bool ParserAdapter::initExt(const char* id, IParserApi* api)
@@ -256,15 +257,16 @@ bool ParserAdapter::init(const char* id, WTSVariant* cfg)
 void ParserAdapter::release()
 {
 	_stopped = true;
-	if (_parser_api)
-	{
-		_parser_api->release();
-	}
-
+	if (!_parser_api)
+		return;
+	// release() joins callbacks before the SPI and its dependencies disappear.
+	_parser_api->release();
+	_parser_api->registerSpi(NULL);
 	if (_remover)
 		_remover(_parser_api);
 	else
 		delete _parser_api;
+	_parser_api = NULL;
 }
 
 bool ParserAdapter::run()

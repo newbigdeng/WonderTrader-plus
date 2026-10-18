@@ -56,6 +56,23 @@ WtEngine::WtEngine()
 	WtHelper::setTime(_cur_date, _cur_time, _cur_secs);
 }
 
+WtEngine::~WtEngine()
+{
+	stop();
+}
+
+void WtEngine::stop()
+{
+	{
+		StdUniqueLock lock(_mtx_task);
+		_terminated = true;
+	}
+	_cond_task.notify_all();
+	if (_thrd_task && _thrd_task->joinable())
+		_thrd_task->join();
+	_thrd_task.reset();
+}
+
 void WtEngine::set_date_time(uint32_t curDate, uint32_t curTime, uint32_t curSecs /* = 0 */, uint32_t rawTime /* = 0 */)
 {
 	_cur_date = curDate;
@@ -1073,34 +1090,25 @@ void WtEngine::do_set_position(const char* stdCode, double qty, double curPx /* 
 
 void WtEngine::push_task(TaskItem task)
 {
-	{
-		StdUniqueLock lock(_mtx_task);
-		_task_queue.push(task);
-	}
-	
-
-	if (_thrd_task == NULL)
-	{
-		_thrd_task.reset(new StdThread([this]{
-			task_loop();
-		}));
-	}
-
+	StdUniqueLock lock(_mtx_task);
+	if (_terminated)
+		return;
+	_task_queue.push(task);
+	if (!_thrd_task)
+		_thrd_task.reset(new StdThread([this]{ task_loop(); }));
 	_cond_task.notify_all();
 }
 
 void WtEngine::task_loop()
 {
-	while (!_terminated)
+	for (;;)
 	{
 		TaskQueue temp;
 		{
 			StdUniqueLock lock(_mtx_task);
-			if(_task_queue.empty())
-			{
-				_cond_task.wait(_mtx_task);
-				continue;
-			}
+			_cond_task.wait(lock, [this]{ return _terminated || !_task_queue.empty(); });
+			if (_task_queue.empty())
+				break;
 
 			temp.swap(_task_queue);
 		}

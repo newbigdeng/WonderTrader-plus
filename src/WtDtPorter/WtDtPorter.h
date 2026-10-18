@@ -18,6 +18,7 @@ extern "C"
 
 	EXPORT_FLAG void		initialize(WtString cfgFile, WtString logCfg, bool bCfgFile, bool bLogCfgFile);
 	EXPORT_FLAG void		start(bool bAsync = false);
+	EXPORT_FLAG void release_datakit();
 
 	EXPORT_FLAG	WtString	get_version();
 	EXPORT_FLAG	void		write_log(unsigned int level, const char* message, const char* catName);

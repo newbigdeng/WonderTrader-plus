@@ -1,8 +1,0 @@
-.venv/
-*.db
-*.db-*
-login.local.json
-*.pid
-*.log
-logs/
-evidence/

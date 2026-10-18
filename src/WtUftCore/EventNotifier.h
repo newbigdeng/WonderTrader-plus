@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file EventCaster.h
  * \project	WonderTrader
  *
@@ -9,17 +9,20 @@
  */
 #pragma once
 
-#include <boost/asio/io_service.hpp>
+#include <atomic>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/post.hpp>
 
 #include "../Includes/WTSMarcos.h"
 #include "../Includes/WTSObject.hpp"
 #include "../Share/StdUtils.hpp"
 
-typedef unsigned long(*FuncCreateMQServer)(const char*);
-typedef void(*FuncDestroyMQServer)(unsigned long);
-typedef void(*FundPublishMessage)(unsigned long, const char*, const char*, unsigned long);
+typedef uint32_t(*FuncCreateMQServer)(const char*, bool);
+typedef void(*FuncDestroyMQServer)(uint32_t);
+typedef void(*FundPublishMessage)(uint32_t, const char*, const char*, uint32_t);
 
-typedef void(*FuncLogCallback)(unsigned long, const char*, bool);
+typedef void(*FuncLogCallback)(uint32_t, const char*, bool);
 typedef void(*FuncRegCallbacks)(FuncLogCallback);
 
 
@@ -33,6 +36,8 @@ class EventNotifier
 public:
 	EventNotifier();
 	~EventNotifier();
+	void stop();
+
 
 private:
 	void	tradeToJson(const char* trader, uint32_t localid, const char* stdCode, WTSTradeInfo* trdInfo, std::string& output);
@@ -49,6 +54,10 @@ public:
 
 	void	notify_event(const char* message);
 
+	void	notify_chart_marker(uint64_t time, const char* straId, double price, const char* icon, const char* tag);
+	void	notify_chart_index(uint64_t time, const char* straId, const char* idxName, const char* lineName, double val);
+	void	notify_trade(const char* straId, const char* stdCode, bool isLong, bool isOpen, uint64_t curTime, double price, const char* userTag);
+
 private:
 	std::string		_url;
 	uint32_t		_mq_sid;
@@ -57,8 +66,8 @@ private:
 	FundPublishMessage	_publisher;
 	FuncRegCallbacks	_register;
 
-	bool			_stopped;
-	boost::asio::io_service		_asyncio;
+	std::atomic<bool> _stopped;
+	boost::asio::io_context		_asyncio;
 	StdThreadPtr				_worker;
 };
 

@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtRtRunner.h
  * \project	WonderTrader
  *
@@ -16,6 +16,7 @@
 #include "../Includes/IDataReader.h"
 
 #include "../WtCore/EventNotifier.h"
+#include <atomic>
 #include "../WtCore/CtaStrategyMgr.h"
 #include "../WtCore/HftStrategyMgr.h"
 #include "../WtCore/SelStrategyMgr.h"
@@ -80,6 +81,8 @@ public:
 	void run(bool bAsync = false);
 
 	void release();
+	bool replayFlush(uint32_t date, uint32_t time);
+	bool requestAccount(const char* trader);
 
 	void registerCtaCallbacks(FuncStraInitCallback cbInit, FuncStraTickCallback cbTick, FuncStraCalcCallback cbCalc, FuncStraBarCallback cbBar, FuncSessionEvtCallback cbSessEvt, FuncStraCondTriggerCallback cbCondTrigger = NULL);
 	void registerSelCallbacks(FuncStraInitCallback cbInit, FuncStraTickCallback cbTick, FuncStraCalcCallback cbCalc, FuncStraBarCallback cbBar, FuncSessionEvtCallback cbSessEvt);
@@ -232,7 +235,7 @@ private:
 	FuncExecCmdCallback		_cb_exec_cmd;
 	FuncExecInitCallback	_cb_exec_init;
 
-	WTSVariant*			_config;
+	WTSVariant*			_config = nullptr;
 	TraderAdapterMgr	_traders;
 	ParserAdapterMgr	_parsers;
 	WtExecuterFactory	_exe_factory;
@@ -240,7 +243,8 @@ private:
 	WtCtaEngine			_cta_engine;
 	WtHftEngine			_hft_engine;
 	WtSelEngine			_sel_engine;
-	WtEngine*			_engine;
+	WtEngine*			_engine = nullptr;
+	std::atomic<bool> _released{false};
 
 	WtDataStorage*		_data_store;
 

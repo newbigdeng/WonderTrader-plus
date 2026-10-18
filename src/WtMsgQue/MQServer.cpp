@@ -1,182 +1,87 @@
-﻿/*!
- * \file EventCaster.cpp
- * \project	WonderTrader
- *
- * \author Wesley
- * \date 2020/03/30
- * 
- * \brief 
- */
+/* WonderTrader, Wesley Liu. NNG transport migration, 2026-10-15. */
 #include "MQServer.h"
 #include "MQManager.h"
-
-#include "../Share/StrUtil.hpp"
-
-#include <spdlog/fmt/fmt.h>
-#include <atomic>
-
-
-#ifndef NN_STATIC_LIB
-#define NN_STATIC_LIB
-#endif
-#include <nanomsg/nn.h>
-#include <nanomsg/pubsub.h>
-
-
+#include <nng/protocol/pubsub0/pub.h>
+#include <algorithm>
+#include <cstring>
 USING_NS_WTP;
-
-
-inline uint32_t makeMQSvrId()
-{
-	static std::atomic<uint32_t> _auto_server_id{ 1001 };
-	return _auto_server_id.fetch_add(1);
-}
-
-
-MQServer::MQServer(MQManager* mgr)
-	: _sock(-1)
-	, _ready(false)
-	, _mgr(mgr)
-	, _confirm(false)
-	, m_bTerminated(false)
-	, m_bTimeout(false)
-{
-	_id = makeMQSvrId();
-}
-
+namespace { std::atomic<uint32_t> server_id{1001}; }
+MQServer::MQServer(MQManager* mgr): _mgr(mgr), _id(server_id.fetch_add(1)) {}
 MQServer::~MQServer()
 {
-	if (!_ready)
-		return;
-
-	m_bTerminated = true;
-	m_condCast.notify_all();
-	if (m_thrdCast)
-		m_thrdCast->join();
-
-	//if (_sock >= 0)
-	//	nn_close(_sock);
+    m_bTerminated = true;
+    m_condCast.notify_all();
+    if (_ready) nng_close(_sock); // Also interrupts an outstanding send.
+    if (m_thrdCast && m_thrdCast->joinable()) m_thrdCast->join();
 }
-
-bool MQServer::init(const char* url, bool confirm /* = false */)
+void MQServer::pipe_event(nng_pipe, nng_pipe_ev ev, void* arg)
 {
-	if (_sock >= 0)
-		return true;
-
-	_confirm = confirm;
-
-	_sock = nn_socket(AF_SP, NN_PUB);
-	if(_sock < 0)
-	{
-		_mgr->log_server(_id, fmt::format("MQServer {} has an error {} while initializing", _id, _sock).c_str());
-		return false;
-	}
-
-	int bufsize = 8 * 1024 * 1024;
-	nn_setsockopt(_sock, NN_SOL_SOCKET, NN_SNDBUF, &bufsize, sizeof(bufsize));
-
-	_url = url;
-	if(nn_bind(_sock, url) < 0)
-	{
-		_mgr->log_server(_id, fmt::format("MQServer {} has an error while binding url {}", _id, url).c_str());
-		return false;
-	}
-	else
-	{
-		_mgr->log_server(_id, fmt::format("MQServer {} has binded to {} ", _id, url).c_str());
-	}
-
-	_ready = true;
-
-	_mgr->log_server(_id, fmt::format("MQServer {} ready", _id).c_str());
-	return true;
+    auto* self = static_cast<MQServer*>(arg);
+    {
+        StdUniqueLock lock(self->m_mtxCast);
+        if (ev == NNG_PIPE_EV_ADD_POST) ++self->_connections;
+        else if (ev == NNG_PIPE_EV_REM_POST && self->_connections) --self->_connections;
+    }
+    self->m_condCast.notify_all();
 }
-
+bool MQServer::init(const char* url, bool confirm)
+{
+    if (_ready) return true;
+    if (!url) return false;
+    int rv = nng_pub0_open(&_sock);
+    if (rv) { _mgr->log_server(_id, nng_strerror(rv)); return false; }
+    // NNG buffers count messages, whereas nanomsg counted bytes.
+    if ((rv = nng_socket_set_int(_sock, NNG_OPT_SENDBUF, 1024)) ||
+        (rv = nng_socket_set_ms(_sock, NNG_OPT_SENDTIMEO, 1000)) ||
+        (rv = nng_pipe_notify(_sock, NNG_PIPE_EV_ADD_POST, pipe_event, this)) ||
+        (rv = nng_pipe_notify(_sock, NNG_PIPE_EV_REM_POST, pipe_event, this)) ||
+        (rv = nng_listen(_sock, url, nullptr, 0))) {
+        _mgr->log_server(_id, nng_strerror(rv));
+        nng_close(_sock);
+        return false;
+    }
+    _url = url;
+    _confirm = confirm;
+    _ready = true;
+    m_thrdCast.reset(new StdThread([this] { cast(); }));
+    _mgr->log_server(_id, "NNG publisher ready");
+    return true;
+}
 void MQServer::publish(const char* topic, const void* data, uint32_t dataLen)
 {
-	if(_sock < 0)
-	{
-		_mgr->log_server(_id, fmt::format("MQServer {} has not been initialized yet", _id).c_str());
-		return;
-	}
-
-	if(data == NULL || dataLen == 0 || m_bTerminated)
-		return;
-
-	{
-		StdUniqueLock lock(m_mtxCast);
-		m_dataQue.push(PubData(topic, data, dataLen));
-		m_bTimeout = false;
-	}
-
-	if(m_thrdCast == NULL)
-	{
-		m_thrdCast.reset(new StdThread([this](){
-
-			if (m_sendBuf.empty())
-				m_sendBuf.resize(1024 * 1024, 0);
-			while (!m_bTerminated)
-			{
-				int cnt = (int)nn_get_statistic(_sock, NN_STAT_CURRENT_CONNECTIONS);
-				if(m_dataQue.empty() || (cnt == 0 && _confirm))
-				{
-					StdUniqueLock lock(m_mtxCast);
-					m_bTimeout = true;
-					m_condCast.wait_for(lock, std::chrono::seconds(60));
-					//如果有新的数据进来，timeout会被改为false
-					//如果没有新的数据进来，timeout会保持为true
-					if (m_bTimeout)
-					{
-						//等待超时以后，广播心跳包
-						m_dataQue.push(PubData("HEARTBEAT", "", 0));
-					}
-					else
-					{
-						continue;
-					}
-				}	
-
-				PubDataQue tmpQue;
-				{
-					StdUniqueLock lock(m_mtxCast);
-					tmpQue.swap(m_dataQue);
-				}
-				
-				while(!tmpQue.empty())
-				{
-					const PubData& pubData = tmpQue.front();
-
-					if (!pubData._data.empty())
-					{
-						std::size_t len = sizeof(MQPacket) + pubData._data.size();
-						if (m_sendBuf.size() < len)
-							m_sendBuf.resize(m_sendBuf.size() * 2);
-						MQPacket* pack = (MQPacket*)m_sendBuf.data();
-						strncpy(pack->_topic, pubData._topic.c_str(), 32);
-						pack->_length = (uint32_t)pubData._data.size();
-						memcpy(&pack->_data, pubData._data.data(), pubData._data.size());
-						int bytes_snd = 0;
-						for(;;)
-						{
-							int bytes = nn_send(_sock, m_sendBuf.data() + bytes_snd, len - bytes_snd, 0);
-							if (bytes >= 0)
-							{
-								bytes_snd += bytes;
-								if(bytes_snd == len)
-									break;
-							}
-							else
-								std::this_thread::sleep_for(std::chrono::milliseconds(1));
-						}
-						
-					}
-					tmpQue.pop();
-				} 
-			}
-		}));
-	}
-	else
-	{
-		m_condCast.notify_all();
-	}
+    if (!_ready || !topic || !data || !dataLen || m_bTerminated) return;
+    {
+        StdUniqueLock lock(m_mtxCast);
+        m_dataQue.emplace(topic, data, dataLen);
+    }
+    m_condCast.notify_all();
+}
+void MQServer::cast()
+{
+    while (!m_bTerminated) {
+        std::queue<PubData> pending;
+        {
+            StdUniqueLock lock(m_mtxCast);
+            const bool signalled = m_condCast.wait_for(lock, std::chrono::seconds(60), [this] {
+                return m_bTerminated || ((!_confirm || _connections) && !m_dataQue.empty());
+            });
+            if (m_bTerminated) break;
+            if (_confirm && !_connections) continue;
+            if (!signalled && m_dataQue.empty()) m_dataQue.emplace("HEARTBEAT", nullptr, 0);
+            pending.swap(m_dataQue);
+        }
+        while (!pending.empty() && !m_bTerminated) {
+            const auto& pub = pending.front();
+            std::string frame(sizeof(MQPacket) + pub.data.size(), '\0');
+            // Keep the established 32-byte topic + uint32 length + payload wire format.
+            std::memcpy(&frame[0], pub.topic.data(), std::min(pub.topic.size(), size_t(32)));
+            const uint32_t length = static_cast<uint32_t>(pub.data.size());
+            std::memcpy(&frame[32], &length, sizeof(length));
+            if (length) std::memcpy(&frame[sizeof(MQPacket)], pub.data.data(), length);
+            // NNG sends one complete message; a successful call returns zero, not a byte count.
+            const int rv = nng_send(_sock, &frame[0], frame.size(), 0);
+            if (rv && !m_bTerminated) _mgr->log_server(_id, nng_strerror(rv));
+            pending.pop();
+        }
+    }
 }

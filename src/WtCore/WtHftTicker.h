@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtHftTicker.h
  * \project	WonderTrader
  *
@@ -32,6 +32,7 @@ public:
 	void	init(IDataReader* store, const char* sessionID);
 	void	on_tick(WTSTickData* curTick);
 
+	void	set_replay(uint32_t date, uint32_t time, uint32_t tradingdate) { _replay = true; _date = date; _time = time; _replay_tdate = tradingdate; }
 	void	run();
 	void	stop();
 
@@ -52,8 +53,10 @@ private:
 	std::atomic<uint64_t>	_next_check_time;
 	std::atomic<uint32_t>	_last_emit_pos;
 
-	bool			_stopped;
+	std::atomic<bool>	_stopped;
 	StdThreadPtr	_thrd;
+	bool _replay = false;
+	uint32_t _replay_tdate = 0;
 };
 
 NS_WTP_END

@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * /file main.cpp
  * /project	WonderTrader
  *
@@ -50,7 +50,8 @@ int main(int argc, char* argv[])
 		filename = cParam->get<std::string>();
 	else
 		filename = "./config.yaml";
-	runner.config(filename);
+	if (!runner.config(filename))
+		return 2;
 
 	runner.run(false);
 	return 0;

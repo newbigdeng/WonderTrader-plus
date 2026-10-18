@@ -50,6 +50,7 @@ public:
 	bool config(const std::string& filename);
 
 	void run(bool bAsync = false);
+	void stop();
 
 private:
 	bool initTraders(WTSVariant* cfgTrader);
@@ -96,5 +97,6 @@ private:
 	bool				_is_sel;
 
 	bool				_to_exit;
+	bool				_stopped;
 };
 

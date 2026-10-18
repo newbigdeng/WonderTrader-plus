@@ -22,6 +22,7 @@
 
 DataManager::DataManager()
 	: _writer(NULL)
+	, _remover(NULL)
 	, _bd_mgr(NULL)
 	, _state_mon(NULL)
 {
@@ -30,6 +31,7 @@ DataManager::DataManager()
 
 DataManager::~DataManager()
 {
+	release();
 }
 
 bool DataManager::isSessionProceeded(const char* sid)
@@ -95,7 +97,11 @@ void DataManager::release()
 	if (_writer)
 	{
 		_writer->release();
-		_remover(_writer);
+		if (_remover)
+			_remover(_writer);
+		else
+			delete _writer;
+		_writer = NULL;
 	}
 }
 

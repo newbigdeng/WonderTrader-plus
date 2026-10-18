@@ -526,7 +526,7 @@ void WtBtRunner::config(const char* cfgFile, bool isFile /* = true */)
 
 void WtBtRunner::run(bool bNeedDump /* = false */, bool bAsync /* = false */)
 {
-	if (_running)
+	if (_running.exchange(true))
 		return;
 
 	_async = bAsync;
@@ -542,6 +542,7 @@ void WtBtRunner::run(bool bNeedDump /* = false */, bool bAsync /* = false */)
 	if (!bAsync)
 	{
 		_replayer.run(bNeedDump);
+		_running = false;
 	}
 	else
 	{
@@ -602,6 +603,8 @@ void WtBtRunner::stop()
 
 void WtBtRunner::release()
 {
+	stop();
+	_notifier.stop();
 	WTSLogger::stop();
 }
 

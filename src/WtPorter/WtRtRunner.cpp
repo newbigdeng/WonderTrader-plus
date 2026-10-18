@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtRtRunner.cpp
  * \project	WonderTrader
  *
@@ -870,6 +870,11 @@ bool WtRtRunner::initEngine()
 		_engine = &_cta_engine;
 	}
 
+	if (auto replay = cfg->get("replay"))
+	{
+		_engine->set_date_time(replay->getUInt32("date"), replay->getUInt32("time") / 100000, replay->getUInt32("time") % 100000);
+		_engine->set_trading_date(replay->getUInt32("tradingdate"));
+	}
 	_engine->set_adapter_mgr(&_traders);
 	
 	return true;
@@ -1132,8 +1137,46 @@ void WtRtRunner::handleLogAppend(WTSLogLevel ll, const char* msg)
 	_notifier.notify_log(LOG_TAGS[ll-100], msg);
 }
 
+bool WtRtRunner::replayFlush(uint32_t date, uint32_t time)
+{
+	if (!_config || !_config->get("env")->get("replay") || !_engine || _released) return false;
+	if (_data_mgr.reader()) _data_mgr.reader()->onMinuteEnd(date, time, _engine->get_trading_date());
+	if (_is_hft) _hft_engine.on_minute_end(date, time);
+	else _cta_engine.on_schedule(date, time);
+	_engine->on_session_end();
+	return true;
+}
+
+bool WtRtRunner::requestAccount(const char* trader)
+{
+    if (_released || !_engine) return false;
+    if (trader && *trader)
+    {
+        auto adapter = _traders.getAdapter(trader);
+        if (!adapter || !adapter->isReady()) return false;
+        adapter->queryFund();
+        return true;
+    }
+    bool requested = false;
+    for (const auto& item : _traders.getAdapters())
+    {
+        if (!item.second || !item.second->isReady()) continue;
+        item.second->queryFund();
+        requested = true;
+    }
+    return requested;
+}
+
 void WtRtRunner::release()
 {
+	if (_released.exchange(true)) return;
+	// Stop producers before flushing state; Python callbacks remain alive here.
+	_to_exit = true;
+	_parsers.release();
+	if (_engine) _engine->stop();
+	_traders.release();
+	// Close while MQManager and generated-directory caches are still alive.
+	_notifier.stop();
 	WTSLogger::stop();
 }
 

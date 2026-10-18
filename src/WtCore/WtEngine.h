@@ -8,6 +8,7 @@
  * \brief 
  */
 #pragma once
+#include <atomic>
 #include <queue>
 #include <functional>
 #include <stdint.h>
@@ -82,6 +83,8 @@ class WtEngine : public WtPortContext, public IParserStub
 {
 public:
 	WtEngine();
+	virtual ~WtEngine();
+	virtual void stop();
 
 	inline void set_adapter_mgr(TraderAdapterMgr* mgr) { _adapter_mgr = mgr; }
 
@@ -307,7 +310,7 @@ protected:
 	TaskQueue		_task_queue;
 	StdUniqueMutex	_mtx_task;
 	StdCondVariable	_cond_task;
-	bool			_terminated;
+	std::atomic<bool>	_terminated;
 
 	typedef struct _RiskMonFactInfo
 	{

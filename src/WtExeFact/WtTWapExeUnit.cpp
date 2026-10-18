@@ -32,6 +32,11 @@ WtTWapExeUnit::WtTWapExeUnit()
 	, _end_time(0)
 	, _last_place_time(0)
 	, _last_tick_time(0)
+	, _sess_info(NULL)
+	, _tail_secs(0)
+	, _fire_span(1)
+	, _min_open_lots(1)
+	, _in_calc(false)
 	, isCanCancel{ true }
 {
 }
@@ -44,6 +49,8 @@ WtTWapExeUnit::~WtTWapExeUnit()
 
 	if (_comm_info)
 		_comm_info->release();
+	if (_sess_info)
+		_sess_info->release();
 }
 
 inline double get_real_target(double _target) {
@@ -93,7 +100,7 @@ void WtTWapExeUnit::init(ExecuteContext* ctx, const char* stdCode, WTSVariant* c
 	if (cfg->has("minopenlots"))
 	_min_open_lots = cfg->getDouble("minopenlots");	//最小开仓数量
 	_total_secs = calTmSecs(_begin_time, _end_time);//执行总时间：秒
-	_fire_span = (_total_secs - _tail_secs) / _total_times;		//单次发单时间间隔,要去掉尾部时间计算,这样的话,最后剩余的数量就有一个兜底发单的机制了
+	_fire_span = _total_times == 0 || _tail_secs >= _total_secs ? 1 : std::max(1U, (_total_secs - _tail_secs) / _total_times);		//单次发单时间间隔,要去掉尾部时间计算,这样的话,最后剩余的数量就有一个兜底发单的机制了
 
 	ctx->writeLog(fmt::format("执行单元WtTWapExeUnit[{}] 初始化完成,订单超时 {} 秒,执行时限 {} 秒,收尾时间 {} 秒,间隔时间 {} 秒", stdCode, _ord_sticky, _total_secs, _tail_secs, _fire_span).c_str());
 }
@@ -132,7 +139,7 @@ void WtTWapExeUnit::on_order(uint32_t localid, const char* stdCode, bool isBuy, 
 			
 			//撤单以后重发,一般是加点重发;对最小下单量的校验
 			//fire_at_once(_this_target - realPos);
-			fire_at_once(max(_min_open_lots, _this_target - realPos));
+			fire_at_once(_this_target - realPos);
 			/***---end---23.5.22---zhaoyk***/
 		}
 	}
@@ -188,7 +195,7 @@ void WtTWapExeUnit::on_channel_ready()
 
 void WtTWapExeUnit::on_channel_lost()
 {
-
+	_channel_ready = false;
 }
 
 
@@ -236,7 +243,7 @@ void WtTWapExeUnit::on_tick(WTSTickData* newTick)
 	}
 	else
 	{
-		uint64_t now = TimeUtils::getLocalTimeNow();
+		uint64_t now = _ctx->getCurTime();
 		bool hasCancel = false;
 		if (_ord_sticky != 0 && _orders_mon.has_order()) 
 		{			
@@ -285,7 +292,7 @@ void WtTWapExeUnit::fire_at_once(double qty)
 	_last_tick->retain();
 	WTSTickData* curTick = _last_tick;
 	const char* code = _code.c_str();
-	uint64_t now = TimeUtils::getLocalTimeNow();
+	uint64_t now = _ctx->getCurTime();
 	bool isBuy = decimal::gt(qty, 0);
 	double targetPx = 0;
 	//根据价格模式设置,确定委托基准价格: 0-最新价,1-最优价,2-对手价
@@ -406,6 +413,10 @@ void WtTWapExeUnit::do_calc()
 	}
 
 	//如果相比上次没有更新的tick进来，则先不下单，防止开盘前集中下单导致通道被封
+	uint32_t seconds = (_last_tick->actiontime() / 10000000) * 3600 + (_last_tick->actiontime() / 100000 % 100) * 60 + (_last_tick->actiontime() / 1000 % 100);
+	uint32_t beginSeconds = (_begin_time / 100) * 3600 + (_begin_time % 100) * 60;
+	if (seconds < beginSeconds)
+		return;
 	uint64_t curTickTime = (uint64_t)_last_tick->actiondate() * 1000000000 + _last_tick->actiontime();
 	if (curTickTime <= _last_tick_time)
 	{
@@ -416,7 +427,7 @@ void WtTWapExeUnit::do_calc()
 	double this_qty = _order_lots; 	//单次发单手数
 	/***---end---23.5.26---zhaoyk***/
 
-	uint32_t leftTimes = _total_times - _fired_times;
+	uint32_t leftTimes = _fired_times >= _total_times ? 0 : _total_times - _fired_times;
 	/***---begin---23.5.22---zhaoyk***/
 	//_ctx->writeLog(fmt::format("第 {} 次发单", _fired_times).c_str());
 	_ctx->writeLog(fmt::format("第 {} 次发单", _fired_times+1).c_str());
@@ -429,13 +440,13 @@ void WtTWapExeUnit::do_calc()
 	//如果剩余此处为0 ,则需要全部下单
 	//否则,取整(剩余数量/剩余次数)与1的最大值,即最小为_min_open_lots,但是要注意符号处理
 	double curQty = 0;
-	if (leftTimes == 0 && !decimal::eq(diffQty, 0))
+	if ((leftTimes == 0 || seconds - beginSeconds >= _total_secs - std::min(_tail_secs, _total_secs)) && !decimal::eq(diffQty, 0))
 	{
 		bNeedShowHand = true;
-		curQty = max(_min_open_lots, diffQty); 
+		curQty = diffQty; 
 	}
 	else {
-		curQty = std::max(_min_open_lots, round(abs(diffQty) / leftTimes)) * abs(diffQty) / diffQty;
+		curQty = std::min(abs(diffQty), std::max(_min_open_lots, round(abs(diffQty) / leftTimes))) * (diffQty > 0 ? 1 : -1);
 	}
 	
 	/***---end---23.5.22---zhaoyk***/
@@ -444,7 +455,8 @@ void WtTWapExeUnit::do_calc()
 	_this_target = realPos + curQty;	//现仓位量+本轮下单量
 
 	WTSTickData* curTick = _last_tick;
-	uint64_t now = TimeUtils::getLocalTimeNow();
+	curTick->retain();
+	uint64_t now = _ctx->getCurTime();
 	bool isBuy = decimal::gt(diffQty, 0);
 	double targetPx = 0;
 	//根据价格模式设置,确定委托基准价格: 0-最新价,1-最优价,2-对手价

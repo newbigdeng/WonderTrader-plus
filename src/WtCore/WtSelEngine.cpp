@@ -1,4 +1,4 @@
-﻿#include "WtSelEngine.h"
+#include "WtSelEngine.h"
 #include "WtDtMgr.h"
 #include "WtSelTicker.h"
 #include "TraderAdapter.h"
@@ -31,7 +31,7 @@ inline uint32_t makeTaskId()
 
 
 WtSelEngine::WtSelEngine()
-	: _terminated(false)
+	: _tm_ticker(NULL)
 	, _cfg(NULL)
 {
 }
@@ -39,6 +39,18 @@ WtSelEngine::WtSelEngine()
 
 WtSelEngine::~WtSelEngine()
 {
+	stop();
+	delete _tm_ticker;
+	_tm_ticker = NULL;
+	if (_cfg)
+		_cfg->release();
+}
+
+void WtSelEngine::stop()
+{
+	if (_tm_ticker)
+		_tm_ticker->stop();
+	WtEngine::stop();
 }
 
 void WtSelEngine::on_session_end()

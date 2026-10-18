@@ -158,6 +158,7 @@ void WtDataReader::init(WTSVariant* cfg, IDataReaderSink* sink, IHisDataLoader* 
 	if (cfg == NULL)
 		return ;
 
+	_replay = cfg->getBoolean("replay");
 	std::string root_dir = cfg->getCString("path");
 	root_dir = StrUtil::standardisePath(root_dir);
 
@@ -313,7 +314,9 @@ WTSTickSlice* WtDataReader::readTickSlice(const char* stdCode, uint32_t count, u
 	}
 
 	uint32_t endTDate = _base_data_mgr->calcTradingDate(stdPID, curDate, curTime, false);
-	uint32_t curTDate = _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
+	uint32_t curTDate = _replay
+        ? _base_data_mgr->calcTradingDate(stdPID, _sink->get_date(), _sink->get_min_time(), false)
+        : _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
 
 	bool isToday = (endTDate == curTDate);
 
@@ -441,7 +444,9 @@ WTSOrdQueSlice* WtDataReader::readOrdQueSlice(const char* stdCode, uint32_t coun
 	}
 
 	uint32_t endTDate = _base_data_mgr->calcTradingDate(stdPID, curDate, curTime, false);
-	uint32_t curTDate = _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
+	uint32_t curTDate = _replay
+        ? _base_data_mgr->calcTradingDate(stdPID, _sink->get_date(), _sink->get_min_time(), false)
+        : _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
 
 	bool isToday = (endTDate == curTDate);
 
@@ -584,7 +589,9 @@ WTSOrdDtlSlice* WtDataReader::readOrdDtlSlice(const char* stdCode, uint32_t coun
 	}
 
 	uint32_t endTDate = _base_data_mgr->calcTradingDate(stdPID, curDate, curTime, false);
-	uint32_t curTDate = _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
+	uint32_t curTDate = _replay
+        ? _base_data_mgr->calcTradingDate(stdPID, _sink->get_date(), _sink->get_min_time(), false)
+        : _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
 
 	bool isToday = (endTDate == curTDate);
 
@@ -727,7 +734,9 @@ WTSTransSlice* WtDataReader::readTransSlice(const char* stdCode, uint32_t count,
 	}
 
 	uint32_t endTDate = _base_data_mgr->calcTradingDate(stdPID, curDate, curTime, false);
-	uint32_t curTDate = _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
+	uint32_t curTDate = _replay
+        ? _base_data_mgr->calcTradingDate(stdPID, _sink->get_date(), _sink->get_min_time(), false)
+        : _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
 
 	bool isToday = (endTDate == curTDate);
 
@@ -1578,7 +1587,9 @@ WTSKlineSlice* WtDataReader::readKlineSlice(const char* stdCode, WTSKlinePeriod 
 	}
 
 	uint32_t endTDate = _base_data_mgr->calcTradingDate(stdPID, curDate, curTime, false);
-	uint32_t curTDate = _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
+	uint32_t curTDate = _replay
+        ? _base_data_mgr->calcTradingDate(stdPID, _sink->get_date(), _sink->get_min_time(), false)
+        : _base_data_mgr->calcTradingDate(stdPID, 0, 0, false);
 
 	BarsList& barsList = _bars_cache[key];
 	WTSKlineSlice* slice = WTSKlineSlice::create(stdCode, period, 1, NULL, 0);;

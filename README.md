@@ -1,67 +1,214 @@
-# WonderTrader：CTA 成交模型与模拟盘验证
+# WonderTrader-plus
 
-这个仓库是在 [WonderTrader 原版](https://github.com/wondertrader/wondertrader) 上做的二次开发，不是 WT 官方仓库。
+基于 [WonderTrader](https://github.com/wondertrader/wondertrader) 的二次开发。
+保留上游来源、MIT 许可和 Git 历史。
+本仓库不是 WT 官方发行版。
 
-原版 WonderTrader（WT）是以 C++ 为核心的开源量化研发与交易框架，覆盖行情接入与存储、策略开发、历史回测、组合与执行管理、交易通道和运行监控。它提供 CTA、HFT、SEL、UFT 等策略引擎，并通过 [wtpy](https://github.com/wondertrader/wtpy) 向 Python 提供策略、数据和监控接口。
+WonderTrader（WT）是 C++ 量化交易框架。
+它提供行情接入、策略引擎、回测和交易执行。
+[wtpy-plus](https://github.com/newbigdeng/wtpy-plus) 提供 Python 策略和网页工作台。
 
-WT 原有的行情、策略引擎、执行器、交易通道和回测框架都来自原项目。本仓库目前主要做两件事：改造 **CTA 回测里目标仓位到模拟成交** 的规则并测试；运行 **纯 C++ 本地模拟盘**，核对业务链路、记录问题并逐步修复。模拟盘工作尚未完成，会持续更新。Python 侧的成交模型接口改动在 [wtpy-cta-fill-lab](https://github.com/newbigdeng/wtpy-cta-fill-lab)。
+## 怎么读这个仓库？
 
-项目文档分为两个目录：[`docs/cta-fill`](docs/cta-fill/README.md) 介绍成交模型改造与测试，[`docs/sim`](docs/sim/README.md) 记录模拟盘链路、问题、处理过程和验证结果。
+先看两条回测链，再按 Docker 步骤启动。
+写策略和使用监控，请看配套 wtpy-plus。
+旧的开发记录留在历史分支。
 
-## 原版 WT 是怎么跑的
+## 原版 WT 怎样连接行情、策略和交易？
 
-先看实盘/仿真盘。行情接口收到数据后，`ParserAdapter` 统一代码并交给引擎；引擎驱动策略、汇总目标仓位，再把目标交给执行器。执行单元决定报单节奏和价格，`TraderAdapter` 管交易通道的订单、持仓和资金状态。末端接真实交易接口就是实盘，接 `TraderMocker` 就是本地仿真撮合。两者共用上面的执行链。
+行情驱动策略，执行器把目标仓位变成委托。
 
-![WT 原版实盘与仿真盘架构：行情、CTA 执行、数据中台和监控](images/wt-live-sim-architecture-bilingual.png)
+CTA 策略先决定想持有多少仓位。
+执行器再决定何时、按什么价格报单。
+交易适配器维护委托、成交、持仓和资金。
 
-图分成四条线。第二条以 CTA 为例；HFT、SEL 并不一定走相同的执行器路径。图里省略了订单/成交回报的反向箭头：回报先回到 `TraderAdapter`，再通知执行器；`TraderMocker` 自身负责本地模拟撮合，不是另一套独立服务。
+![原版 WT 实盘与仿真盘架构](images/wt-live-sim-architecture-bilingual.png)
 
-数据中台是按需部署的另一条行情链：`WtDtCore` 接收、广播行情并通过 `WtDataStorage` 写历史数据，`WtDtServo` 提供数据读取；若用 UDP 广播接入实盘，可走 `UDPCaster → ParserUDP → ParserAdapter`。消息路线则从引擎和交易通道经 `EventNotifier`、`WtMsgQue` 到 wtpy 的事件接收与监控端。Python 策略通过 `WtPorter`/`WtRtRunner` 接入引擎。这些路径不是每个 Tick 都要依次经过的单条流水线。
+- `ParserAdapter`：统一行情接入。
+- CTA 引擎：运行策略并汇总目标仓位。
+- 执行器：拆单、定价和撤单重报。
+- `TraderAdapter`：连接柜台并处理回报。
+- 数据组件：存储行情，并提供历史读取。
 
-这里的“组合管理”主要指引擎汇总多策略目标、路由到执行器；资金盈亏记账在引擎，交易账户资金状态在 `TraderAdapter`。原版已有过滤、仓位缩放和风险监控等机制，但不应把它们理解为独立的通用风控服务。[原版实盘架构图](images/prod_struture.png)也保留在仓库里。
+HFT 策略直接管理委托，调用链与 CTA 有区别。
+上游原始架构图也继续保留：
 
-CTA 回测走另一条链：`HisDataReplayer` 回放历史数据，`CtaMocker` 驱动策略、维护模拟仓位和盈亏，不经过上图的 `TraderAdapter`/`TraderMocker`。下面这张是原版 README 的回测架构图，更多背景可看 [WT 上游仓库](https://github.com/wondertrader/wondertrader)。
+![WonderTrader 原始架构图](images/prod_struture.png)
 
-![WonderTrader 原版回测架构](images/backtest.jpg)
+## 为什么保留两套回测？
 
-我改动的部分在 CTA 回测路径上。下图只画与这次改动有关的节点，省略了其他策略引擎和实盘执行链；`CtaFillModel` 给出成交决策，实际改仓位、记账和写 CSV 仍由 `CtaMocker` 完成。
+快速回测验证想法，Plus 回测检查执行路径。
 
-![本仓库 CTA 回测成交路径](images/cta-backtest-architecture-zh.png)
+一个目标仓位，在回测里可能立即完成。
+在实盘里，它需要经过拆单和交易回报。
+两种路径回答的问题不同，所以都保留。
 
-## 我改了什么
+![快速回测与 Plus 回测](images/plus-replay.svg)
 
-### CTA 回测成交模型
+| 选择 | 运行路径 | 适合检查什么 |
+| --- | --- | --- |
+| 原版快速回测 | 历史回放 → Mocker | 信号、参数和成交假设 |
+| Plus 回测 | 历史回放 → 实盘引擎 → 模拟柜台 | 执行、资金和回报处理 |
 
-原来的 CTA 回测在处理目标仓位时，基本按目标与当前仓位的差额直接成交。这种做法很适合作基线，但没法观察“只成交一部分”会怎样影响后面的策略信号。我想保持策略不变、单独替换成交规则，于是把成交判断从 `CtaMocker` 中拆了出来，并留下保持原行为的 `LegacyCtaFill` 作对照。
+快速 CTA 回测保留三种成交模型：
 
-- `CausalTouchFill` 按事件顺序和对手盘报价判断能否成交。这个模型仍是全量成交；没有可用报价时不会编造一个成交价。
-- `VolumeLimitedFill` 根据 Tick 成交量和参与率限制本次可成交手数，允许部分成交。一个 Tick 的量不能被同一事件里的多次尝试重复使用。
-- 待成交信号保存最新**目标仓位**，剩余量每次用“目标 − 实际仓位”重算。目标被覆盖时，不会把旧目标的未成交量叠到新目标上。
-- 增加成交决策、实际成交和目标覆盖的审计输出，并用单元测试、Legacy 输出对照和真实 Tick 回测检查数量、费用、反手与目标取消等边界。
+- `legacy_cta`：保持原版成交规则。
+- `causal_touch`：按事件顺序和有效报价成交。
+- `volume_limited`：限制参与量，允许部分成交。
 
-核心代码在 [`CtaFillModel.h`](src/WtBtCore/CtaFillModel.h)、[`CtaMocker.cpp`](src/WtBtCore/CtaMocker.cpp) 和 [`test_cta_fill_model.cpp`](src/TestUnits/test_cta_fill_model.cpp)。目前这些改动只用于 CTA 回测；模型里的“成交”是回测记账，不是交易所委托回报。
+Plus CTA 使用真实执行器和 `TraderAdapter`。
+可选择 MinImpact、TWAP 或 VWAP。
+TWAP（按时间拆单）分时执行目标量。
+VWAP（按量分配）使用预先提供的权重曲线。
+回放不会用未来 Tick 计算这条曲线。
 
-模型规格、配置入口、测试结果及待解决边界见 [`docs/cta-fill`](docs/cta-fill/README.md)。
+Plus HFT 保留直接委托路径。
+它不套用 CTA 执行器。
+运行入口见配套 Python 仓库的 `PlusReplayRunner`。
 
-### 模拟盘验证与修复（持续更新）
+## 手续费、滑点和保证金怎样处理？
 
-原生 C++ 本地链路为：人工 Tick → QuoteFactory 存储/UDP 广播 → CTA 策略与执行器 → TraderMocker → 回报与通道持仓。
+成交和资金计算共用模拟柜台的账户账簿。
 
-- 2026-09-30：完成基线、取价对照、三手分笔和恢复实验，业务闭环通过；同时复现负累计成交量、零日期、快照滞后、首 Tick 缺口与退出异常。
-- 2026-10-02：基于 `c7c5619` 加 `sim-fix-20261002` 工作区补丁，修复累计成交量、日期字段、线程关闭和共享对象池生命周期，补正常关闭后的状态保存。14 个本地集成场景、54 项单元测试、独立 ASan 与初始化释放检查通过；带仓重启及部分成交重启没有重复开仓。源码与证据已保存，尚未提交或推送该补丁。
-- 正常退出的最终快照已改善；运行中资金保存顺序、首次 Tick、撮合 span、可选插件打包和压力/故障恢复仍待处理。验证平台为 Linux GCC 8.4，Windows 与真实 CTP 网络尚未运行验收。
-- 已编译 CTP 模块并准备 [SimNow 分阶段教程](docs/sim/simnow-guide.md)，尚未登录柜台或下单；后续继续验证行情、账户查询、一手开平、带仓恢复和跨日规则。
+拆单只成交一部分时，也只能扣这部分费用。
+委托撤销后，占用的资金必须释放。
+否则可能算错可用资金，并错误拒单。
 
-详细原因与实测数据见 [2026-10-02 修复记录](docs/sim/repair-20261002.md)，持续状态见 [`docs/sim`](docs/sim/README.md)。每项新进展注明版本、日期和实际验收边界。
+| 项目 | 处理方式 |
+| --- | --- |
+| 手续费 | 复用 WT `calcFee`，支持按手或金额计费 |
+| 最低手续费 | 按每次成交收取，区分开、平、平今 |
+| 配置匹配 | 合约优先，其次品种；缺费率直接提示 |
+| 保证金 | 显式覆盖优先，其次品种、合约方向费率 |
+| 开仓委托 | 冻结保证金和预计费用 |
+| 部分成交、撤单 | 更新或释放冻结金额 |
+| 资金不足 | 拒绝开仓，并记录原因 |
+| 滑点 | 按不利方向增加指定跳数 |
+| 限价和涨跌停 | 成交价不突破委托和价格限制 |
 
-原版项目：[WonderTrader](https://github.com/wondertrader/wondertrader) · [wtpy](https://github.com/wondertrader/wtpy)。本仓库保留原项目的 [MIT 许可](LICENSE) 与 Git 历史。
+每次任务固定策略源码、费用和执行参数。
+同时记录数据集编号和回放范围。
+运行记录包含原生委托、成交和资金输出。
+Python 展示这些结果，不另算一套成交账簿。
+品种的非零 `marginrate` 沿用 WT 覆盖规则。
+没有品种覆盖时，使用合约的多空费率。
 
-2026-10-15后续：定位并修复EventNotifier局部work导致空闲后停止发布的问题，调整stop/join顺序、初始化MQ函数指针并补委托通知release；定向编译部署simnow-03 WtPorter。修复wtpy WatchDog热改MQ漏传sink和残留已释放接收器，实时组合datmod改auto。实际旧/新版原生对照0→5条，真实CTP观察日志26条到达WebSocket和页面；受控原生3日志/6委托/3成交全部传输，原生撤单/成交提示已实见。未发新CTP订单，最终柜台持仓0、活动委托0；新增CTP开平到监控仍待开盘验收，部分前端重复展示未定位，普通委托静默与表格HTTP刷新是原设计。未据此宣称全系统退出或策略盈利通过。见[13源码修复与实测](docs/sim/guides/13_wtpy监控部署与操作.md)。
+## 引擎和通信改了哪些地方？
 
-2026-10-15下午：监控日志增加可选自动刷新，保留原生界面；实际页面暂停/恢复、手动补读和按组合记忆通过。通道CSV读取游标与schedule.active持久化修复已同步wtpy主源码，重复读取为[2,2,2]，禁用调度重载仍关闭。受控旧日期持仓可在三个口径读取；这不证明柜台快照新鲜。本轮未发新CTP订单，未重启观察服务；部分页面重复显示和新增CTP开平到监控仍待验收。账号、页面读写及操作边界见[14](docs/sim/guides/14_监控原理与页面读写链路.md)，源码对照见[13](docs/sim/guides/13_wtpy监控部署与操作.md)。
+重点修复回报、撮合和退出时的状态一致性。
 
-2026-10-15图解补充：监控教程新增模块与SQLite、按钮到进程、成交查询与事件推送三张概念图，配合核心源码解释前后端联动。[阅读14号](docs/sim/guides/14_监控原理与页面读写链路.md)。仅更新文档，没有新增交易或启动故障验收。
+- nanomsg 替换为 NNG，保留消息接口和帧格式。
+- Boost.Asio 改用 `io_context` 等现行接口。
+- 修复异步通知工作对象和关闭顺序。
+- 修复 HFT/UFT 剩余量、部分成交及方向处理。
+- 修复行情对象释放和撮合回调插入问题。
+- 未订阅的 Bar 不再插入无用订阅键。
+- 修复合约保证金率被静态局部值串用的问题。
+- 增加账户查询入口、连接状态及拒单事件输出。
 
-2026-10-15 21:18只读检查：simnow-03/run根目录发现8个异常空目录、8个JSON文件，文件名含非法UTF-8或控制字符，内容可解析；时间集中在10月14日验收退出附近。保存调用与WtHelper静态目录析构风险已定位，历史运行归因仍待独立复现，未修复或清理。当前run.py仍选观察配置、executers为空、策略未armed；未启停或下单。见[16号](docs/sim/guides/16_目录异常与当前运行模式.md)，页面文件依赖见[14号第12节](docs/sim/guides/14_监控原理与页面读写链路.md#current-dependencies)。
+暂停和过滤保持不同含义。
+暂停决策回调保留已有持仓。
+过滤沿用 WT 的目标调整流程。
+是否归零取决于过滤配置及后续执行成交。
 
-2026-10-15运行依赖图解：按实际进程映射与构建产物确认runtime加载项目WtPorter、存储与UDP模块、CTP隔离适配插件，CTP API本身为厂商SDK；四个项目部署文件及一个SDK文件逐字节一致，未计算哈希。SQLite登记4个组合，run下7个generated目录是当前输出和归档，两个历史查看组读取复制快照。14号补齐逐页面数据库/配置/输出依赖及三张图，未替换库、启停或下单。见[14号](docs/sim/guides/14_监控原理与页面读写链路.md#runtime-libraries)。
+主要源码入口：
+
+| 内容 | 文件 |
+| --- | --- |
+| 快速 CTA 成交模型 | [CtaFillModel.h](src/WtBtCore/CtaFillModel.h) |
+| 快速回测记账 | [CtaMocker.cpp](src/WtBtCore/CtaMocker.cpp) |
+| Plus 模拟委托 | [TraderMocker.cpp](src/TraderMocker/TraderMocker.cpp) |
+| Plus 费用与资金 | [TraderMockerFinance.cpp](src/TraderMocker/TraderMockerFinance.cpp) |
+| TWAP / VWAP | [WtExeFact](src/WtExeFact) |
+| 柜台状态与资金输出 | [TraderAdapter.cpp](src/WtCore/TraderAdapter.cpp) |
+| Python 原生桥 | [WtPorter](src/WtPorter) |
+| 消息通信 | [WtMsgQue](src/WtMsgQue) |
+
+## 新环境使用哪些技术？
+
+Linux 镜像从源码构建选定的运行组件。
+当前构建和测试平台为 Linux x86_64。
+
+| 层 | 已使用的版本 |
+| --- | --- |
+| 系统 | Ubuntu 26.04 |
+| C++ | GCC 15.2，C++17 |
+| 构建 | CMake 4.2.3，Ninja |
+| 网络与异步 | Boost 1.90 / Boost.Asio 1.38 |
+| 消息通信 | NNG 1.11 |
+| CTP | 6.7.13，头文件与厂商库配套 |
+| Python 工作台 | Python 3.14，FastAPI，SQLite |
+| 网页工作台 | Vue 3，Pinia，Element Plus，Vite |
+
+选定的日志和 JSON 头文件仍保留兼容版本。
+详情见 [third_party/compat](third_party/compat/README.md)。
+这不是全部第三方库都升级到最新版的声明。
+
+## 怎样用 Docker 从零构建？
+
+先构建原生镜像，再构建配套工作台。
+
+```bash
+git clone -b wt-plus https://github.com/newbigdeng/WonderTrader-plus.git
+git clone -b py-plus https://github.com/newbigdeng/wtpy-plus.git
+docker build --build-arg BUILD_JOBS=2 \
+  -t wondertrader-plus:native ./WonderTrader-plus
+cd wtpy-plus
+docker compose up -d --build
+```
+
+打开 `http://127.0.0.1:8100/console/`。
+首次启动会创建独立管理员。
+读取初始密码的方法见配套仓库 README。
+数据放在 Docker 数据卷，不写进镜像。
+
+在虚拟机运行时，用 SSH 转发到 Windows：
+
+```bash
+ssh -N -L 127.0.0.1:8100:127.0.0.1:8100 用户名@虚拟机地址
+```
+
+Docker 默认仅发布本机端口。
+启动工作台不会自动连接柜台或下单。
+
+## 性能变化测了多少？
+
+已测消息通信和指定的撮合热点。
+
+同一共享虚拟机的本地 IPC 对照：
+每种报文各跑 5 轮，每轮 1000 条。
+每次仅一条消息在途，统计每轮分位数的中位数。
+在同一新容器内加载旧库和新库。
+旧库使用 GCC 8.4，新库使用 GCC 15.2。
+
+| 报文 | 旧通道 P50 | 新通道 P50 | 延迟下降 |
+| --- | ---: | ---: | ---: |
+| 256 字节 | 1.257 ms | 1.055 ms | 16.0% |
+| 4096 字节 | 1.291 ms | 0.972 ms | 24.7% |
+
+同一组 4096 字节测量中：
+P99 从 4.579 ms 降为 3.167 ms，下降 30.8%。
+该测量包含 Python 回调和虚拟机调度。
+传输实现及工具链同时改变，不能单独归因。
+
+HFT 撮合热点在同一新工具链下对比源码。
+1000 笔不成交挂单，交替运行 7 轮。
+每轮回放 10000 Tick，计算每 Tick 平均耗时。
+七轮均值的中位数从 65.25 μs 降为 61.33 μs。
+动态分配从每 Tick 11 次降为 1 次。
+轮间耗时存在重叠，不代表整机提升约 6%。
+
+## 边界与不能说的结论
+
+Plus 当前支持 CTA 和 HFT Python 策略。
+UFT 不会被悄悄替换成 HFT。
+模拟成交不包含真实排队、冲击和网络延迟。
+保证金没有模拟组合优惠、强平和每日结算重置。
+结束时保留持仓，不凭空生成平仓行情。
+柜台已收费用以账户回报为准。
+现有测试不能证明策略盈利或实盘成交质量。
+没有单独测出 Ubuntu、GCC 或 Asio 的收益。
+
+原版项目：[WonderTrader](https://github.com/wondertrader/wondertrader)。
+配套项目：[wtpy-plus](https://github.com/newbigdeng/wtpy-plus)。
+许可：[MIT](LICENSE)。厂商 SDK 保留其原有条款。

@@ -155,3 +155,27 @@ void install_signal_hooks(TracerLogCallback cbLog, ExitHandler sigHandler = NULL
 	}
 }
 
+
+// SIGINT/SIGTERM handlers may not log, acquire locks, or run destructors.
+// Applications poll this flag and stop their workers on the normal thread.
+static volatile sig_atomic_t g_shutdown_requested = 0;
+
+void request_shutdown(int = 0)
+{
+	g_shutdown_requested = 1;
+}
+
+bool shutdown_requested()
+{
+	return g_shutdown_requested != 0;
+}
+
+void install_shutdown_hooks()
+{
+	g_shutdown_requested = 0;
+	signal(SIGINT, request_shutdown);
+	signal(SIGTERM, request_shutdown);
+#ifdef _WIN32
+	signal(SIGBREAK, request_shutdown);
+#endif
+}

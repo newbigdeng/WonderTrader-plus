@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file EventCaster.cpp
  * \project	WonderTrader
  *
@@ -22,13 +22,17 @@ namespace rj = rapidjson;
 
 USING_NS_WTP;
 
-void on_mq_log(unsigned long id, const char* message, bool bServer)
+void on_mq_log(uint32_t id, const char* message, bool bServer)
 {
 
 }
 
 EventNotifier::EventNotifier()
 	: _mq_sid(0)
+	, _creator(nullptr)
+	, _remover(nullptr)
+	, _publisher(nullptr)
+	, _register(nullptr)
 {
 	
 }
@@ -36,8 +40,16 @@ EventNotifier::EventNotifier()
 
 EventNotifier::~EventNotifier()
 {
+	stop();
+}
+
+void EventNotifier::stop()
+{
 	if (_remover && _mq_sid != 0)
+	{
 		_remover(_mq_sid);
+		_mq_sid = 0;
+	}
 }
 
 bool EventNotifier::init(WTSVariant* cfg)
@@ -72,11 +84,23 @@ bool EventNotifier::init(WTSVariant* cfg)
 	_publisher = (FundPublishMessage)DLLHelper::get_symbol(dllInst, "publish_message");
 	_register = (FuncRegCallbacks)DLLHelper::get_symbol(dllInst, "regiter_callbacks");
 
+	if (!_remover || !_publisher || !_register)
+	{
+		DLLHelper::free_library(dllInst);
+		_creator = nullptr;
+		_remover = nullptr;
+		_publisher = nullptr;
+		_register = nullptr;
+		WTSLogger::error("MQ module {} is missing required C ABI exports", dllpath.c_str());
+		return false;
+	}
+
 	//注册回调函数
 	_register(on_mq_log);
 	
 	//创建一个MQServer
 	_mq_sid = _creator(m_strURL.c_str(), true);
+	if (_mq_sid == 0) return false;
 
 	WTSLogger::info("EventNotifier initialized with channel {}", m_strURL.c_str());
 
@@ -85,13 +109,13 @@ bool EventNotifier::init(WTSVariant* cfg)
 
 void EventNotifier::notifyEvent(const char* evtType)
 {
-	if (_publisher)
-		_publisher(_mq_sid, "BT_EVENT", evtType, (unsigned long)strlen(evtType));
+	if (_publisher && _mq_sid != 0)
+		_publisher(_mq_sid, "BT_EVENT", evtType, static_cast<uint32_t>(strlen(evtType)));
 }
 
 void EventNotifier::notifyData(const char* topic, void* data , uint32_t dataLen)
 {
-	if (_publisher)
+	if (_publisher && _mq_sid != 0)
 		_publisher(_mq_sid, topic, (const char*)data, dataLen);
 }
 
@@ -115,6 +139,6 @@ void EventNotifier::notifyFund(const char* topic, uint32_t uDate, double total_p
 		output = sb.GetString();
 	}
 
-	if (_publisher)
-		_publisher(_mq_sid, topic, (const char*)output.c_str(), (unsigned long)output.size());
+	if (_publisher && _mq_sid != 0)
+		_publisher(_mq_sid, topic, (const char*)output.c_str(), static_cast<uint32_t>(output.size()));
 }

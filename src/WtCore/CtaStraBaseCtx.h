@@ -60,6 +60,8 @@ class CtaStraBaseCtx : public ICtaStraCtx
 public:
 	CtaStraBaseCtx(WtCtaEngine* engine, const char* name, int32_t slippage);
 	virtual ~CtaStraBaseCtx();
+	// Flush after strategy callbacks stop; this is not a session-end event.
+	void flush_state();
 
 private:
 	void	init_outputs();

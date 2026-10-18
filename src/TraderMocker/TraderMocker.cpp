@@ -1,4 +1,4 @@
-﻿#include "TraderMocker.h"
+#include "TraderMocker.h"
 
 #include "../Includes/WTSVariant.hpp"
 #include "../Includes/WTSDataDef.hpp"
@@ -14,8 +14,15 @@
 #include <boost/bind.hpp>
 #include <boost/filesystem.hpp>
 
+#include <fstream>
+#include <future>
+#include <map>
+#include <mutex>
+#include <algorithm>
+#include <cmath>
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
+#include <rapidjson/writer.h>
 namespace rj = rapidjson;
 
 //By Wesley @ 2022.01.05
@@ -31,8 +38,35 @@ inline void write_log(ITraderSpi* sink, WTSLogLevel ll, const char* format, cons
 	sink->handleTraderLog(ll, buffer);
 }
 
+namespace {
+std::map<uint32_t, TraderMocker*> replayMockers;
+std::mutex replayRegistryMutex;
+}
 extern "C"
 {
+	EXPORT_FLAG int plus_mocker_step(uint32_t id, const WTSTickStruct* tick)
+	{
+		TraderMocker* mocker;
+		{ std::lock_guard<std::mutex> guard(replayRegistryMutex);
+		  auto it = replayMockers.find(id); mocker = it == replayMockers.end() ? nullptr : it->second; }
+		return mocker ? mocker->replayStep(tick) : -1;
+	}
+	EXPORT_FLAG bool plus_mocker_barrier(uint32_t id)
+	{
+		TraderMocker* mocker;
+		{ std::lock_guard<std::mutex> guard(replayRegistryMutex);
+		  auto it = replayMockers.find(id); mocker = it == replayMockers.end() ? nullptr : it->second; }
+		return mocker && mocker->replayBarrier();
+	}
+	EXPORT_FLAG uint64_t plus_mocker_clock(uint32_t id)
+	{
+		std::lock_guard<std::mutex> guard(replayRegistryMutex);
+		auto it = replayMockers.find(id);
+		if (it == replayMockers.end()) return 0;
+		uint32_t date, time;
+		it->second->replayDateTime(date, time);
+		return TimeUtils::makeTime(date, time);
+	}
 	EXPORT_FLAG ITraderApi* createTrader()
 	{
 		TraderMocker *instance = new TraderMocker();
@@ -97,6 +131,15 @@ TraderMocker::TraderMocker()
 
 TraderMocker::~TraderMocker()
 {
+	release();
+	if (_replay)
+	{
+		std::lock_guard<std::mutex> guard(replayRegistryMutex);
+		auto it = replayMockers.find(_mocker_id);
+		if (it != replayMockers.end() && it->second == this) replayMockers.erase(it);
+	}
+	if (_awaits)
+		_awaits->release();
 	if (_orders)
 		_orders->release();
 
@@ -124,7 +167,7 @@ bool TraderMocker::makeEntrustID(char* buffer, int length)
 
 	try
 	{
-		fmtutil::format_to(buffer, "me.{}.{}.{}", TimeUtils::getCurDate(), _mocker_id, _auto_entrust_id++);
+		fmtutil::format_to(buffer, "me.{}.{}.{}", (_replay ? _replay_date.load() : TimeUtils::getCurDate()), _mocker_id, _auto_entrust_id++);
 		return true;
 	}
 	catch (...)
@@ -143,7 +186,7 @@ int TraderMocker::orderInsert(WTSEntrust* entrust)
 	}
 
 	entrust->retain();
-	_io_service.post([this, entrust](){
+	boost::asio::post(_io_service, [this, entrust](){
 		StdUniqueLock lock(_mutex_api);
 
 		WTSContractInfo* ct = entrust->getContractInfo();
@@ -159,6 +202,7 @@ int TraderMocker::orderInsert(WTSEntrust* entrust)
 
 		bool bPass = false;
 		std::string msg;
+		Reservation reserved;
 		do 
 		{
 			if (ct == NULL)
@@ -208,6 +252,10 @@ int TraderMocker::orderInsert(WTSEntrust* entrust)
 			}
 
 
+            if (_capital > 0) {
+                bPass = reserve(entrust, ct, reserved, msg);
+                break;
+            }
 			//开仓直接通过,不检查资金
 			if (entrust->getOffsetType() == WOT_OPEN)
 			{
@@ -280,12 +328,18 @@ int TraderMocker::orderInsert(WTSEntrust* entrust)
 			ordInfo->setOrderID(str);
 			ordInfo->setStateMsg(msg.c_str());
 			ordInfo->setOrderState(WOS_NotTraded_Queuing);
-			ordInfo->setOrderTime(TimeUtils::getLocalTimeNow());
+			// Date is the local calendar date of the order timestamp, not trading day.
+			uint32_t orderDate, orderTime;
+			replayDateTime(orderDate, orderTime);
+			ordInfo->setOrderDate(orderDate);
+			ordInfo->setOrderTime(TimeUtils::makeTime(orderDate, orderTime));
 			ordInfo->setVolume(entrust->getVolume());
 			ordInfo->setVolLeft(entrust->getVolume());
 			ordInfo->setPriceType(entrust->getPriceType());
 			ordInfo->setOrderFlag(entrust->getOrderFlag());
 
+			if (_capital > 0) _reservations[ordInfo->getOrderID()] = std::move(reserved);
+			replayAudit("order", ordInfo);
 			if (_listener != NULL)
 			{
 				_listener->onRspEntrust(entrust, NULL);
@@ -312,6 +366,7 @@ int TraderMocker::orderInsert(WTSEntrust* entrust)
 		}
 		else
 		{
+			auditReject(entrust, msg.c_str(), msg.find("资金") != std::string::npos ? "INSUFFICIENT_FUNDS" : "ORDER_REJECTED");
 			WTSError* err = WTSError::create(WEC_ORDERINSERT, msg.c_str());
 			if (_listener != NULL)
 			{
@@ -358,9 +413,15 @@ int32_t TraderMocker::match_once()
 				//处理记录
 				std::vector<std::string> to_erase;
 
-				for (auto it = _awaits->begin(); it != _awaits->end(); it++)
+				std::vector<WTSOrderInfo*> pending;
+				for (auto it = _awaits->begin(); it != _awaits->end(); ++it)
+					pending.push_back((WTSOrderInfo*)it->second);
+				if (_replay) std::sort(pending.begin(), pending.end(), [](WTSOrderInfo* a, WTSOrderInfo* b){
+					return strtoull(strrchr(a->getOrderID(), '.')+1, nullptr, 10) < strtoull(strrchr(b->getOrderID(), '.')+1, nullptr, 10);
+				});
+				double bidLeft = curTick->bidqty(0), askLeft = curTick->askqty(0);
+				for (WTSOrderInfo* ordInfo : pending)
 				{
-					WTSOrderInfo* ordInfo = (WTSOrderInfo*)it->second;
 					if (ordInfo->getVolLeft() == 0 || strcmp(ordInfo->getCode(), curTick->code()) != 0)
 						continue;
 
@@ -370,12 +431,12 @@ int32_t TraderMocker::match_once()
 					if (isBuy)
 					{
 						uPrice = curTick->askprice(0);
-						uVolume = curTick->askqty(0);
+						uVolume = _replay ? askLeft : curTick->askqty(0);
 					}
 					else
 					{
 						uPrice = curTick->bidprice(0);
-						uVolume = curTick->bidqty(0);
+						uVolume = _replay ? bidLeft : curTick->bidqty(0);
 					}
 
 					if (decimal::eq(uVolume, 0))
@@ -394,12 +455,40 @@ int32_t TraderMocker::match_once()
 					if (ordInfo->getPriceType() == WPT_LIMITPRICE && ((isBuy && decimal::lt(target, uPrice)) || (!isBuy && decimal::gt(target, uPrice))))
 						continue;
 
+                    double quotePrice = uPrice;
+                    if ((curTick->upperlimit()>0 && quotePrice>curTick->upperlimit()) ||
+                        (curTick->lowerlimit()>0 && quotePrice<curTick->lowerlimit())) continue;
+                    double slip = _slippage_ticks * commInfo->getPriceTick();
+                    uPrice += isBuy ? slip : -slip;
+                    if (ordInfo->getPriceType() == WPT_LIMITPRICE)
+                        uPrice = isBuy ? std::min(uPrice, target) : std::max(uPrice, target);
+                    if (curTick->upperlimit() > 0) uPrice = std::min(uPrice, curTick->upperlimit());
+                    if (curTick->lowerlimit() > 0) uPrice = std::max(uPrice, curTick->lowerlimit());
+                    if (uPrice <= 0 || (ordInfo->getPriceType() == WPT_LIMITPRICE &&
+                        ((isBuy && uPrice > target) || (!isBuy && uPrice < target)))) continue;
 					count++;
 
 					double maxVolume = min(uVolume, ordInfo->getVolLeft());
-					std::vector<uint32_t> ayVol = splitVolume((uint32_t)maxVolume, (uint32_t)_min_qty, (uint32_t)_max_qty);
-					for (uint32_t curVol : ayVol)
-					{
+					std::vector<uint32_t> ayVol = _replay ? std::vector<uint32_t>{(uint32_t)maxVolume} : splitVolume((uint32_t)maxVolume, (uint32_t)_min_qty, (uint32_t)_max_qty);
+
+                    for (uint32_t curVol : ayVol)
+                    {
+                        double feePaid = 0, profit = 0;
+                        if (_capital > 0 && !settle(ordInfo, uPrice, curVol, feePaid, profit)) {
+                            unfreeze(ordInfo);
+                            ordInfo->setOrderState(WOS_Canceled);
+                            ordInfo->setStateMsg("资金不足，剩余开仓已拒绝");
+                            replayAudit("reject", ordInfo, nullptr, "INSUFFICIENT_FUNDS: 价格或权益变化后资金不足");
+                            if (_listener) {
+                                _listener->onPushOrder(ordInfo);
+                                auto err = WTSError::create(WEC_ORDERINSERT, "INSUFFICIENT_FUNDS: 资金不足");
+                                _listener->onTraderError(err); err->release();
+                            }
+                            to_erase.emplace_back(ordInfo->getOrderID());
+                            break;
+                        }
+                        _audit_fee = feePaid; _audit_profit = profit; _audit_quote = quotePrice;
+                        if (_replay) { if (isBuy) askLeft -= curVol; else bidLeft -= curVol; }
 
 						WTSTradeInfo* trade = WTSTradeInfo::create(curTick->code(), curTick->exchg());
 						trade->setDirection(ordInfo->getDirection());
@@ -415,12 +504,15 @@ int32_t TraderMocker::match_once()
 						fmtutil::format_to(str, "mt.{}.{}", _mocker_id, makeTradeID());
 						trade->setTradeID(str);
 
-						trade->setTradeTime(TimeUtils::getLocalTimeNow());
+						uint32_t tradeDate, tradeTime;
+						replayDateTime(tradeDate, tradeTime);
+						trade->setTradeDate(tradeDate);
+						trade->setTradeTime(TimeUtils::makeTime(tradeDate, tradeTime));
 						trade->setUserTag(ordInfo->getUserTag());
 
 						//更新订单数据
 						ordInfo->setVolLeft(ordInfo->getVolLeft() - curVol);
-						ordInfo->setVolTraded(ordInfo->getVolTraded() - curVol);
+						ordInfo->setVolTraded(ordInfo->getVolTraded() + curVol);
 						if (decimal::eq(ordInfo->getVolLeft(), 0))
 						{
 							ordInfo->setOrderState(WOS_AllTraded);
@@ -441,7 +533,8 @@ int32_t TraderMocker::match_once()
 							strcpy(pItem._exchg, ct->getExchg());
 						}
 
-						if(commInfo->getCoverMode() == CM_None)
+						if (_capital > 0) {}
+						else if(commInfo->getCoverMode() == CM_None)
 						{
 
 						}
@@ -474,6 +567,7 @@ int32_t TraderMocker::match_once()
 						}
 						
 
+						replayAudit("trade", ordInfo, trade);
 						if (_listener)
 						{
 							StdUniqueLock lock(_mutex_api);
@@ -517,15 +611,49 @@ int32_t TraderMocker::match_once()
 
 bool TraderMocker::init(WTSVariant *params)
 {
+	_capital = params->getDouble("capital");
+    _margin_rate = params->has("marginrate") ? params->getDouble("marginrate") : -1;
+    double slippage = params->getDouble("slippage_ticks");
+    if (!std::isfinite(_capital) || _capital < 0 || !std::isfinite(_margin_rate) ||
+        (params->has("marginrate") && (_margin_rate <= 0 || _margin_rate > 1)) ||
+        !std::isfinite(slippage) || slippage < 0 || slippage != std::floor(slippage) || slippage > UINT32_MAX) return false;
+    _slippage_ticks = (uint32_t)slippage;
+    const char* feeFile = params->getCString("fees");
+    if (feeFile && *feeFile) {
+        std::string text; StdFile::read_file_content(feeFile, text);
+        rj::Document fees; fees.Parse(text.c_str());
+        if (fees.HasParseError() || !fees.IsObject()) return false;
+        for (auto it = fees.MemberBegin(); it != fees.MemberEnd(); ++it) {
+            const auto& row = it->value;
+            if (!row.IsObject() || !row.HasMember("byvolume") || !row["byvolume"].IsBool()) return false;
+            for (const char* key : {"open","close","closetoday"})
+                if (!row.HasMember(key) || !row[key].IsNumber() || row[key].GetDouble() < 0) return false;
+            if (row.HasMember("minfee") && (!row["minfee"].IsNumber() || row["minfee"].GetDouble() < 0)) return false;
+            double minimum = row.HasMember("minfee") ? row["minfee"].GetDouble() : 0;
+            _fees[it->name.GetString()] = {row["byvolume"].GetBool(),row["open"].GetDouble(),row["close"].GetDouble(),row["closetoday"].GetDouble(),minimum};
+        }
+    }
+	_replay = params->getBoolean("replay");
+    if (_capital > 0 && !_replay) return false; // Financial accounting requires the serialized Plus replay clock.
+	_replay_date = params->getUInt32("replay_date");
+	_replay_time = params->getUInt32("replay_time");
+	_replay_tdate = params->getUInt32("replay_tradingdate");
 	_millisecs = params->getUInt32("span");
 	_use_newpx = params->getBoolean("newpx");
 	_mocker_id = params->getUInt32("mockerid");
 	_max_qty = params->getDouble("maxqty");
 	_min_qty = params->getDouble("minqty");
 
+	if (_replay)
+	{
+		_auto_order_id = 0; _auto_trade_id = 0; _auto_entrust_id = 0;
+		std::lock_guard<std::mutex> guard(replayRegistryMutex);
+		if (replayMockers.count(_mocker_id)) return false;
+		replayMockers[_mocker_id] = this;
+	}
 	_udp_port = params->getInt32("udp_port");
 
-	boost::asio::ip::address addr = boost::asio::ip::address::from_string("0.0.0.0");
+	boost::asio::ip::address addr = boost::asio::ip::make_address("0.0.0.0");
 	_broad_ep = boost::asio::ip::udp::endpoint(addr, _udp_port);
 
 	if (decimal::eq(_max_qty, 0))
@@ -548,6 +676,7 @@ bool TraderMocker::init(WTSVariant *params)
 
 void TraderMocker::load_positions()
 {
+	if (_capital > 0) return;
 	if (!boost::filesystem::exists(_pos_file.c_str()))
 		return;
 
@@ -639,28 +768,41 @@ void TraderMocker::save_positions()
 
 void TraderMocker::release()
 {
-	if (_terminated)
-		return;
-
+	// Idempotent shutdown, including release() after disconnect().
+	const bool saveCheckpoint = (_thrd_worker != NULL);
 	_terminated = true;
-
-	if (_thrd_match)
-	{
+	if (_thrd_match && _thrd_match->joinable())
 		_thrd_match->join();
-	}
-
-	if (_thrd_worker)
+	_thrd_match.reset();
+	if (_thrd_worker && _thrd_worker->joinable())
 	{
-		_io_service.stop();
+		// Finish API work already queued before closing the receiving service.
+		boost::asio::post(_io_service, [this]{ _io_service.stop(); });
 		_thrd_worker->join();
 	}
+	else
+		_io_service.stop();
+	_thrd_worker.reset();
+	if (_b_socket)
+	{
+		boost::system::error_code ec;
+		_b_socket->close(ec);
+		delete _b_socket;
+		_b_socket = NULL;
+	}
+	// No thread may mutate positions while the final checkpoint is written.
+	if (saveCheckpoint && !_pos_file.empty()) {
+		save_positions();
+        if (_capital > 0) { writeAccount(); _funds.close(); }
+    }
 }
 
 void TraderMocker::registerSpi(ITraderSpi *listener)
 {
 	_listener = listener;
 
-	_bd_mgr = listener->getBaseDataMgr();
+	if (listener)
+		_bd_mgr = listener->getBaseDataMgr();
 }
 
 void TraderMocker::reconn_udp()
@@ -688,11 +830,18 @@ void TraderMocker::reconn_udp()
 
 void TraderMocker::connect()
 {
-	reconn_udp();
+	if (_thrd_worker)
+		return;
+	_terminated = false;
+	_io_service.restart();
+	if (!_replay) reconn_udp();
 
-	_thrd_worker.reset(new StdThread(boost::bind(&boost::asio::io_service::run, &_io_service)));
+		_thrd_worker.reset(new StdThread([this]{
+		auto guard = boost::asio::make_work_guard(_io_service);
+		_io_service.run();
+	}));
 
-	_io_service.post([this](){
+	boost::asio::post(_io_service, [this](){
 		StdUniqueLock lock(_mutex_api);
 
 		load_positions();
@@ -704,25 +853,19 @@ void TraderMocker::connect()
 
 void TraderMocker::disconnect()
 {
-	if (_terminated)
-		return;
-
-	_terminated = true;
-
-	if (_thrd_match)
-	{
-		_thrd_match->join();
-	}
+	release();
 }
 
 bool TraderMocker::isConnected()
 {
-	return _thrd_match != NULL;
+	return _replay ? _thrd_worker != NULL && !_terminated : _thrd_match != NULL;
 }
 
 int TraderMocker::login(const char* user, const char* pass, const char* productInfo)
 {
-	_thrd_match.reset(new StdThread([this]() {
+	if (_thrd_match)
+		return 0;
+	if (!_replay) _thrd_match.reset(new StdThread([this]() {
 		while (!_terminated)
 		{
 			match_once();
@@ -732,11 +875,11 @@ int TraderMocker::login(const char* user, const char* pass, const char* productI
 		}
 	}));
 
-	_io_service.post([this](){
+	boost::asio::post(_io_service, [this](){
 		StdUniqueLock lock(_mutex_api);
 
 		if (_listener)
-			_listener->onLoginResult(true, "", TimeUtils::getCurDate());
+			_listener->onLoginResult(true, "", _replay ? _replay_tdate : TimeUtils::getCurDate());
 	});
 
 	return 0;
@@ -751,9 +894,9 @@ int TraderMocker::orderAction(WTSEntrustAction* action)
 {
 	action->retain();
 	
-	_io_service.post([this, action](){
+	boost::asio::post(_io_service, [this, action](){
 		StdUniqueLock lck(_mtx_awaits);	//一定要把awaits锁起来,不然可能会导致一边撮合一边撤单
-		WTSOrderInfo* ordInfo = (WTSOrderInfo*)_awaits->grab(action->getOrderID());
+		WTSOrderInfo* ordInfo = _awaits ? (WTSOrderInfo*)_awaits->grab(action->getOrderID()) : nullptr;
 
 		/*
 		 *	撤单也要考虑几个问题
@@ -768,6 +911,7 @@ int TraderMocker::orderAction(WTSEntrustAction* action)
 			if (_listener)
 				_listener->onTraderError(err);
 			err->release();
+			action->release();
 			return;
 		}
 
@@ -775,8 +919,10 @@ int TraderMocker::orderAction(WTSEntrustAction* action)
 		WTSCommodityInfo* commInfo = ct->getCommInfo();
 
 		bool bPass = false;
+		if (_capital > 0) unfreeze(ordInfo);
 		do 
 		{
+            if (_capital > 0) { bPass = true; break; }
 			//开仓委托直接撤单
 			if (ordInfo->getOffsetType() == WOT_OPEN)
 			{
@@ -806,6 +952,7 @@ int TraderMocker::orderAction(WTSEntrustAction* action)
 
 		} while (false);
 
+		replayAudit("cancel", ordInfo);
 		ordInfo->setStateMsg("撤单成功");
 		ordInfo->setOrderState(WOS_Canceled);
 		//ordInfo->setVolLeft(0);	
@@ -817,9 +964,8 @@ int TraderMocker::orderAction(WTSEntrustAction* action)
 		}
 
 		ordInfo->release();
-		action->release();
-
 		_awaits->remove(action->getOrderID());
+		action->release();
 
 		save_positions();
 	});
@@ -829,21 +975,22 @@ int TraderMocker::orderAction(WTSEntrustAction* action)
 
 int TraderMocker::queryAccount()
 {
-	_io_service.post([this](){
+	boost::asio::post(_io_service, [this](){
 		WTSArray* ay = WTSArray::create();
 		WTSAccountInfo* accountInfo = WTSAccountInfo::create();
 		accountInfo->setCurrency("CNY");
-		accountInfo->setBalance(0);
-		accountInfo->setPreBalance(0);
-		accountInfo->setCloseProfit(0);
-		accountInfo->setMargin(0);
-		accountInfo->setAvailable(0);
-		accountInfo->setCommission(0);
-		accountInfo->setFrozenMargin(0);
-		accountInfo->setFrozenCommission(0);
+        const auto snapshot = account();
+		accountInfo->setBalance(snapshot.balance);
+		accountInfo->setPreBalance(_capital);
+		accountInfo->setCloseProfit(snapshot.realized);
+		accountInfo->setMargin(snapshot.margin);
+		accountInfo->setAvailable(snapshot.available);
+		accountInfo->setCommission(snapshot.commission);
+		accountInfo->setFrozenMargin(snapshot.frozen_margin);
+		accountInfo->setFrozenCommission(snapshot.frozen_commission);
 		accountInfo->setDeposit(0);
 		accountInfo->setWithdraw(0);
-		accountInfo->setDynProfit(0);
+		accountInfo->setDynProfit(snapshot.unrealized);
 
 		ay->append(accountInfo, false);
 
@@ -861,7 +1008,7 @@ int TraderMocker::queryAccount()
 
 int TraderMocker::queryPositions()
 {
-	_io_service.post([this](){
+	boost::asio::post(_io_service, [this](){
 		WTSArray* ayPos = WTSArray::create();
 
 		for(auto& v : _positions)
@@ -872,7 +1019,23 @@ int TraderMocker::queryPositions()
 			if(ct == NULL)
 				continue;
 
-			WTSCommodityInfo* commInfo = ct->getCommInfo();
+            WTSCommodityInfo* commInfo = ct->getCommInfo();
+            auto fillPosition = [this,ct,commInfo](WTSPositionItem* target,const PosUnit& unit,bool isLong) {
+                if (_capital <= 0) return;
+                double today = 0, previous = 0, availToday = 0, availPrevious = 0, cost = 0, margin = 0, pnl = 0;
+                for (const auto& lot : unit.lots) {
+                    if (lot.date == _replay_tdate) { today += lot.volume; availToday += lot.volume-lot.frozen; }
+                    else { previous += lot.volume; availPrevious += lot.volume-lot.frozen; }
+                    cost += lot.price*lot.volume;
+                    double mark=markPrice(ct,lot.price);
+                    margin += mark*lot.volume*commInfo->getVolScale()*marginRate(ct,isLong);
+                    pnl += (mark-lot.price)*(isLong?1:-1)*lot.volume*commInfo->getVolScale();
+                }
+                target->setNewPosition(today);target->setPrePosition(previous);
+                target->setAvailNewPos(availToday);target->setAvailPrePos(availPrevious);
+                target->setAvgPrice(unit._volume>0?cost/unit._volume:0);
+                target->setPositionCost(cost*commInfo->getVolScale());target->setMargin(margin);target->setDynProfit(pnl);
+            };
 
 			if(pItem._long._volume > 0)
 			{
@@ -881,6 +1044,7 @@ int TraderMocker::queryPositions()
 				pInfo->setDirection(WDT_LONG);
 				pInfo->setNewPosition(pItem._long._volume);
 				pInfo->setAvailNewPos(pItem._long._volume - pItem._long._frozen);
+                fillPosition(pInfo,pItem._long,true);
 
 				ayPos->append(pInfo, false);
 			}
@@ -892,6 +1056,7 @@ int TraderMocker::queryPositions()
 				pInfo->setDirection(WDT_SHORT);
 				pInfo->setNewPosition(pItem._short._volume);
 				pInfo->setAvailNewPos(pItem._short._volume - pItem._short._frozen);
+                fillPosition(pInfo,pItem._short,false);
 
 				ayPos->append(pInfo, false);
 			}
@@ -910,7 +1075,7 @@ int TraderMocker::queryPositions()
 
 int TraderMocker::queryOrders()
 {
-	_io_service.post([this](){
+	boost::asio::post(_io_service, [this](){
 		StdUniqueLock lock(_mutex_api);
 
 		if (_listener)
@@ -922,7 +1087,7 @@ int TraderMocker::queryOrders()
 
 int TraderMocker::queryTrades()
 {
-	_io_service.post([this](){
+	boost::asio::post(_io_service, [this](){
 		StdUniqueLock lock(_mutex_api);
 
 		if (_listener)
@@ -1004,4 +1169,91 @@ void TraderMocker::extract_buffer(uint32_t length, bool isBroad /* = true */)
 
 		_max_tick_time = max(_max_tick_time, (uint64_t)curTick->actiondate() * 1000000000 + curTick->actiontime());
 	}
+}
+
+// Replay operations are serialized with order insertion, cancellation and callbacks.
+// A replay tick matches only orders queued before that tick; new decisions wait for the next tick.
+void TraderMocker::replayDateTime(uint32_t& date, uint32_t& time) const
+{
+	if (_replay) { date = _replay_date.load(); time = _replay_time.load(); }
+	else TimeUtils::getDateTime(date, time);
+}
+bool TraderMocker::replayBarrier()
+{
+	if (!_replay || !_thrd_worker || _terminated) return false;
+	auto promise = std::make_shared<std::promise<void>>();
+	auto future = promise->get_future();
+	boost::asio::post(_io_service, [promise]{ promise->set_value(); });
+	return future.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+}
+int TraderMocker::replayStep(const WTSTickStruct* tick)
+{
+	if (!_replay || !_thrd_worker || _terminated || !tick) return -1;
+	WTSTickStruct copy = *tick;
+	auto promise = std::make_shared<std::promise<int>>();
+	auto future = promise->get_future();
+	boost::asio::post(_io_service, [this, copy, promise]() mutable {
+		_replay_date = copy.action_date; _replay_time = copy.action_time;
+        _replay_tdate = copy.trading_date;
+        _marks[std::string(copy.exchg) + "." + copy.code] = copy;
+		if (_ticks == nullptr) _ticks = TickCache::create();
+		auto curTick = WTSTickData::create(copy);
+		std::string key = std::string(copy.exchg) + "." + copy.code;
+		_ticks->add(key, curTick, false);
+		int matched = match_once();
+        if (_capital > 0) writeAccount(false);
+        promise->set_value(matched);
+	});
+	if (future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) return -2;
+	return future.get();
+}
+
+void TraderMocker::replayAudit(const char* type, WTSOrderInfo* order, WTSTradeInfo* trade, const char* error)
+{
+	if (!_replay) return;
+	rj::Document row(rj::kObjectType);
+	auto& a = row.GetAllocator();
+	row.AddMember("type", rj::Value(type, a), a);
+	row.AddMember("date", _replay_date.load(), a);
+	row.AddMember("time", _replay_time.load(), a);
+	if (order)
+	{
+		row.AddMember("orderid", rj::Value(order->getOrderID(), a), a);
+		row.AddMember("code", rj::Value(order->getCode(), a), a);
+		row.AddMember("direction", (uint32_t)order->getDirection(), a);
+		row.AddMember("offset", (uint32_t)order->getOffsetType(), a);
+		row.AddMember("price", order->getPrice(), a);
+		row.AddMember("volume", order->getVolume(), a);
+		row.AddMember("left", order->getVolLeft(), a);
+	}
+	if (trade)
+	{
+		row.AddMember("tradeid", rj::Value(trade->getTradeID(), a), a);
+		row["price"] = trade->getPrice();
+		row["volume"] = trade->getVolume();
+	}
+    if (trade) {
+        row.AddMember("fee", _audit_fee, a); row.AddMember("realized", _audit_profit, a);
+        row.AddMember("quote_price", _audit_quote, a);
+        row.AddMember("slippage", std::abs(trade->getPrice() - _audit_quote), a);
+        row.AddMember("slippage_ticks", _slippage_ticks, a);
+    }
+    if (error && *error) {
+        row.AddMember("error", rj::Value(error, a), a);
+        row.AddMember("error_code", rj::Value(strstr(error,"INSUFFICIENT_FUNDS") ? "INSUFFICIENT_FUNDS" : "ORDER_REJECTED", a), a);
+    }
+    if (_capital > 0) {
+        writeAccount();
+        std::ifstream input("replay_account.json");
+        std::string raw((std::istreambuf_iterator<char>(input)),{});
+        rj::Document snapshot; snapshot.Parse(raw.c_str());
+        if (!snapshot.HasParseError()) {
+            rj::Value item; item.CopyFrom(snapshot,a); row.AddMember("account",item,a);
+        }
+    }
+	rj::StringBuffer buffer;
+	rj::Writer<rj::StringBuffer> writer(buffer);
+	row.Accept(writer);
+	std::ofstream out("replay_events.jsonl", std::ios::app);
+	out << buffer.GetString() << "\n";
 }

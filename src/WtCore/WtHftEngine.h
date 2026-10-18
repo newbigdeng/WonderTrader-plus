@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtHftEngine.h
  * \project	WonderTrader
  *
@@ -32,6 +32,7 @@ public:
 	virtual void init(WTSVariant* cfg, IBaseDataMgr* bdMgr, WtDtMgr* dataMgr, IHotMgr* hotMgr, EventNotifier* notifier) override;
 
 	virtual void run() override;
+	virtual void stop() override;
 
 	virtual void handle_push_quote(WTSTickData* newTick) override;
 	virtual void handle_push_order_detail(WTSOrdDtlData* curOrdDtl) override;

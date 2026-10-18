@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtCtaTicker.cpp
  * \project	WonderTrader
  *
@@ -58,7 +58,7 @@ void WtCtaRtTicker::trigger_price(WTSTickData* curTick)
 
 void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 {
-	if (_thrd == NULL)
+	if (_thrd == NULL && !_replay)
 	{
 		trigger_price(curTick);
 		return;
@@ -74,6 +74,14 @@ void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 		return;
 	}
 
+	if (_replay && curTick->tradingdate() != _engine->getTradingDate())
+	{
+		_engine->on_session_end();
+		_cur_pos = 0;
+		_last_emit_pos = 0;
+		_engine->set_trading_date(curTick->tradingdate());
+		_engine->on_session_begin();
+	}
 	_date = uDate;
 	_time = uTime;
 
@@ -108,6 +116,7 @@ void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 	{
 		//如果当前时间是0, 则直接赋值即可
 		_cur_pos = minutes;
+		if (_replay) { _engine->set_date_time(_date, wrapMin, curSec, curMin); trigger_price(curTick); }
 	}
 	else if (_cur_pos < minutes)
 	{
@@ -154,6 +163,7 @@ void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 	else
 	{
 		//如果分钟数还是一致的, 则直接触发行情和时间即可
+		if (_replay) _engine->set_date_time(_date, wrapMin, curSec, prevMin);
 		trigger_price(curTick);
 		if (_engine)
 			_engine->set_date_time(_date, wrapMin, curSec, prevMin);
@@ -175,11 +185,13 @@ void WtCtaRtTicker::run()
 	 *	这里一定要在初始化之前把交易日确定下来
 	 *	不然如果策略在on_init的时候调用一些依赖交易日的接口就会出错
 	 */
-	uint32_t curTDate = _engine->get_basedata_mgr()->calcTradingDate(_s_info->id(), _engine->get_date(), _engine->get_min_time(), true);
+	if (_replay) _engine->set_date_time(_date, _time / 100000, _time % 100000);
+	uint32_t curTDate = _replay ? _replay_tdate : _engine->get_basedata_mgr()->calcTradingDate(_s_info->id(), _engine->get_date(), _engine->get_min_time(), true);
 	_engine->set_trading_date(curTDate);
 	WTSLogger::info("Trading date confirmed: {}", curTDate);
 	_engine->on_init();
 	_engine->on_session_begin();
+	if (_replay) return; // The historical stream alone advances time and closes bars.
 
 	//先检查当前时间, 如果大于
 
@@ -275,8 +287,9 @@ void WtCtaRtTicker::run()
 void WtCtaRtTicker::stop()
 {
 	_stopped = true;
-	if (_thrd)
+	if (_thrd && _thrd->joinable())
 		_thrd->join();
+	_thrd.reset();
 }
 
 bool WtCtaRtTicker::is_in_trading() const 

@@ -85,3 +85,9 @@ WTSTickData* IndexFactory::sub_ticks(const char* fullCode)
 	auto ay = StrUtil::split(fullCode, ".");
 	return _data_mgr->getCurTick(ay[1].c_str(), ay[0].c_str());
 }
+void IndexFactory::stop()
+{
+	if (_pool)
+		_pool->wait();
+	_pool.reset();
+}

@@ -1,4 +1,4 @@
-﻿/*!
+/*!
 * \file WtHftTicker.cpp
 * \project	WonderTrader
 *
@@ -37,6 +37,7 @@ WtSelRtTicker::WtSelRtTicker(WtSelEngine* engine)
 
 WtSelRtTicker::~WtSelRtTicker()
 {
+	stop();
 }
 
 void WtSelRtTicker::init(IDataReader* store, const char* sessionID)
@@ -235,6 +236,7 @@ void WtSelRtTicker::run()
 void WtSelRtTicker::stop()
 {
 	_stopped = true;
-	if (_thrd)
+	if (_thrd && _thrd->joinable())
 		_thrd->join();
+	_thrd.reset();
 }

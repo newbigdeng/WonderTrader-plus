@@ -47,14 +47,22 @@ void WtSimpleRiskMon::init(WtPortContext* ctx, WTSVariant* cfg)
 
 void WtSimpleRiskMon::run()
 {
+	std::lock_guard<std::mutex> lock(_lifecycle_mutex);
 	if (_thrd)
 		return;
 
 	_thrd.reset(new std::thread([this](){
-		while (!_stopped)
+		while (!_stopped.load(std::memory_order_relaxed))
 		{
 			if (_ctx && _ctx->isInTrading())
 			{
+				// Rearm by trading day (night sessions are not calendar-day resets).
+				const uint32_t tradingDate = _ctx->getTradingDate();
+				if (_limit_date != tradingDate)
+				{
+					_limit_date = tradingDate;
+					_limited = false;
+				}
 				WTSPortFundInfo* fundInfo = _ctx->getFundInfo();
 				const WTSFundStruct& fs = fundInfo->fundInfo();
 				/*
@@ -130,7 +138,7 @@ void WtSimpleRiskMon::run()
 
 			_last_time = TimeUtils::getLocalTimeNow();
 
-			while (!_stopped)
+			while (!_stopped.load(std::memory_order_relaxed))
 			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(2));
 				uint64_t now = TimeUtils::getLocalTimeNow();;
@@ -143,7 +151,8 @@ void WtSimpleRiskMon::run()
 
 void WtSimpleRiskMon::stop()
 {
-	_stopped = true;
-	if (_thrd)
+	std::lock_guard<std::mutex> lock(_lifecycle_mutex);
+	_stopped.store(true, std::memory_order_relaxed);
+	if (_thrd && _thrd->joinable())
 		_thrd->join();
 }

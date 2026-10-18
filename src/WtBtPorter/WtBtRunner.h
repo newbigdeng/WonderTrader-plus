@@ -9,6 +9,7 @@
  */
 #pragma once
 #include "PorterDefs.h"
+#include <atomic>
 #include "../WtBtCore/EventNotifier.h"
 #include "../WtBtCore/HisDataReplayer.h"
 #include "../Includes/WTSMarcos.h"
@@ -205,7 +206,7 @@ private:
 	EventNotifier	_notifier;
 
 	bool			_inited;
-	bool			_running;
+	std::atomic<bool> _running;
 
 	StdThreadPtr	_worker;
 	bool			_async;

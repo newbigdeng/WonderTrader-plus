@@ -36,7 +36,7 @@ BOOL WINAPI ConsoleCtrlhandler(DWORD dwCtrlType)
 	{
 	case CTRL_CLOSE_EVENT:
 	{
-		g_dataMgr.release();
+		request_shutdown();
 
 		PostThreadMessage(g_dwMainThreadId, WM_QUIT, 0, 0);
 	}
@@ -293,17 +293,7 @@ int main(int argc, char* argv[])
 	CMiniDumper::Enable("QuoteFactory.exe", true);
 #endif
 
-	bool bExit = false;
-	install_signal_hooks([&bExit](const char* message) {
-		if(!bExit)
-			WTSLogger::error(message);
-	}, [&bExit](bool toExit) {
-		if (bExit)
-			return;
-
-		bExit = toExit;
-		WTSLogger::info("Exit flag is {}", bExit);
-	});
+	install_shutdown_hooks();
 
 	if (cParam->exists())
 		filename = cParam->get<std::string>();
@@ -318,11 +308,17 @@ int main(int argc, char* argv[])
 
 	initialize(filename);
 
-	while (!bExit)
+	while (!shutdown_requested())
 	{
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
 	
+	WTSLogger::info("Exit requested, stopping quote factory");
+	g_parsers.release();
+	g_idxFactory.stop();
+	g_stateMon.stop();
+	g_dataMgr.release();
+	g_udpCaster.stop();
 	return 0;
 }
 

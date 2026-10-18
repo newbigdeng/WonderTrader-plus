@@ -7,6 +7,8 @@
  * 
  */
 #pragma once
+#include <atomic>
+#include <mutex>
 #include <thread>
 #include <memory>
 
@@ -17,7 +19,8 @@ USING_NS_WTP;
 class WtSimpleRiskMon : public WtRiskMonitor
 {
 public:
-	WtSimpleRiskMon() :_stopped(false), _limited(false){}
+	WtSimpleRiskMon() :_stopped(false), _limited(false), _limit_date(0){}
+	~WtSimpleRiskMon() override { stop(); }
 
 public:
 	virtual const char* getName() override;
@@ -33,8 +36,10 @@ public:
 private:
 	typedef std::shared_ptr<std::thread> ThreadPtr;
 	ThreadPtr		_thrd;
-	bool			_stopped;
+	std::atomic<bool>	_stopped;
+	std::mutex		_lifecycle_mutex;
 	bool			_limited;
+	uint32_t		_limit_date;
 
 	uint64_t		_last_time;
 

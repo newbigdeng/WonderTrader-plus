@@ -1,6 +1,5 @@
-
 #1. 确定CMake的最低版本需求
-cmake_minimum_required(VERSION 3.0.0)
+cmake_minimum_required(VERSION 3.10)
 
 #2. 确定工程名
 project(WtUftCore LANGUAGES CXX)

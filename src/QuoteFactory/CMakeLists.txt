@@ -1,5 +1,5 @@
 #1. 确定CMake的最低版本需求
-CMAKE_MINIMUM_REQUIRED(VERSION 3.0.0)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 
 #2. 确定工程名
 PROJECT(QuoteFactory LANGUAGES CXX)
@@ -65,5 +65,3 @@ add_custom_command(TARGET QuoteFactory POST_BUILD
 	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}WtDataStorage${SUFFIX} ${EXECUTABLE_OUTPUT_PATH}/
 
 	COMMENT "depends modules copied")
-
-

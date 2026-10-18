@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file ParserUDP.h
  * \project	WonderTrader
  *
@@ -12,10 +12,11 @@
 #include "../Share/StdUtils.hpp"
 
 #include <queue>
+#include <atomic>
 
 #include <boost/asio.hpp>
 #include <boost/array.hpp>
-#include <boost/asio/io_service.hpp>
+#include <boost/asio/io_context.hpp>
 
 USING_NS_WTP;
 using namespace boost::asio;
@@ -68,9 +69,9 @@ private:
 
 	ip::udp::endpoint	_broad_ep;
 	ip::udp::endpoint	_server_ep;
-	io_service			_io_service;
+	io_context			_io_service;
 
-	io_service::strand	_strand;
+	strand<io_context::executor_type>	_strand;
 
 	ip::udp::socket*	_b_socket;
 	ip::udp::socket*	_s_socket;
@@ -80,7 +81,7 @@ private:
 	boost::array<char, 1024> _s_buffer;
 
 	IParserSpi*				_sink;
-	bool					_stopped;
+	std::atomic<bool>		_stopped;
 	bool					_connecting;
 
 	CodeSet					_set_subs;

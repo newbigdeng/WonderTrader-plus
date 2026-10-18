@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file EventCaster.h
  * \project	WonderTrader
  *
@@ -9,17 +9,20 @@
  */
 #pragma once
 
-#include <boost/asio/io_service.hpp>
+#include <atomic>
+#include <boost/asio/io_context.hpp>
+#include <boost/asio/executor_work_guard.hpp>
+#include <boost/asio/post.hpp>
 
 #include "../Includes/WTSMarcos.h"
 #include "../Includes/WTSObject.hpp"
 #include "../Share/StdUtils.hpp"
 
-typedef unsigned long(*FuncCreateMQServer)(const char*);
-typedef void(*FuncDestroyMQServer)(unsigned long);
-typedef void(*FundPublishMessage)(unsigned long, const char*, const char*, unsigned long);
+typedef uint32_t(*FuncCreateMQServer)(const char*, bool);
+typedef void(*FuncDestroyMQServer)(uint32_t);
+typedef void(*FundPublishMessage)(uint32_t, const char*, const char*, uint32_t);
 
-typedef void(*FuncLogCallback)(unsigned long, const char*, bool);
+typedef void(*FuncLogCallback)(uint32_t, const char*, bool);
 typedef void(*FuncRegCallbacks)(FuncLogCallback);
 
 
@@ -33,6 +36,7 @@ class EventNotifier
 public:
 	EventNotifier();
 	~EventNotifier();
+	void stop();
 
 
 private:
@@ -62,8 +66,8 @@ private:
 	FundPublishMessage	_publisher;
 	FuncRegCallbacks	_register;
 
-	bool			_stopped;
-	boost::asio::io_service		_asyncio;
+	std::atomic<bool> _stopped;
+	boost::asio::io_context		_asyncio;
 	StdThreadPtr				_worker;
 };
 

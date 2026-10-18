@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtHftEngine.cpp
  * \project	WonderTrader
  *
@@ -38,15 +38,22 @@ WtHftEngine::WtHftEngine()
 
 WtHftEngine::~WtHftEngine()
 {
+	stop();
 	if (_tm_ticker)
 	{
-		_tm_ticker->stop();
 		delete _tm_ticker;
 		_tm_ticker = NULL;
 	}
 
 	if (_cfg)
 		_cfg->release();
+}
+
+void WtHftEngine::stop()
+{
+	if (_tm_ticker)
+		_tm_ticker->stop();
+	WtEngine::stop();
 }
 
 void WtHftEngine::init(WTSVariant* cfg, IBaseDataMgr* bdMgr, WtDtMgr* dataMgr, IHotMgr* hotMgr, EventNotifier* notifier /* = NULL */)
@@ -68,6 +75,8 @@ void WtHftEngine::run()
 	_tm_ticker = new WtHftRtTicker(this);
 	WTSVariant* cfgProd = _cfg->get("product");
 	_tm_ticker->init(_data_mgr->reader(), cfgProd->getCString("session"));
+	if (auto replay = _cfg->get("replay"))
+		_tm_ticker->set_replay(replay->getUInt32("date"), replay->getUInt32("time"), replay->getUInt32("tradingdate"));
 
 	//启动之前,先把运行中的策略落地
 	{
@@ -282,7 +291,10 @@ void WtHftEngine::on_bar(const char* stdCode, const char* period, uint32_t times
 	thread_local static char key[64] = { 0 };
 	fmtutil::format_to(key, "{}-{}-{}", stdCode, period, times);
 
-	const SubList& sids = _bar_sub_map[key];
+	auto subscription = _bar_sub_map.find(key);
+	if (subscription == _bar_sub_map.end())
+		return;
+	const SubList& sids = subscription->second;
 	for (auto it = sids.begin(); it != sids.end(); it++)
 	{
 		uint32_t sid = it->first;

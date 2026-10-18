@@ -233,7 +233,7 @@ public:
 		if (m_uMarginFlag == 1)
 			return m_lMarginRatio;
 
-		static double commRate = m_commInfo->getMarginRate();
+		double commRate = m_commInfo->getMarginRate();
 		return commRate == 0.0 ? m_lMarginRatio : m_commInfo->getMarginRate();
 	}
 
@@ -241,7 +241,7 @@ public:
 		if (m_uMarginFlag == 1)
 			return m_sMarginRatio;
 
-		static double commRate = m_commInfo->getMarginRate();
+		double commRate = m_commInfo->getMarginRate();
 		return commRate == 0.0 ? m_sMarginRatio : m_commInfo->getMarginRate();
 	}
 

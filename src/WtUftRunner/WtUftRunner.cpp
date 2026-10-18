@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * /file WtUftRunner.cpp
  * /project	WonderTrader
  *
@@ -24,7 +24,7 @@ const char* getBinDir()
 	static std::string basePath;
 	if (basePath.empty())
 	{
-		basePath = boost::filesystem::initial_path<boost::filesystem::path>().string();
+		basePath = boost::filesystem::current_path().string();
 
 		basePath = StrUtil::standardisePath(basePath);
 	}

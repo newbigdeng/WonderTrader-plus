@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtCtaEngine.cpp
  * \project	WonderTrader
  *
@@ -10,6 +10,7 @@
 #define WIN32_LEAN_AND_MEAN
 
 #include "WtCtaEngine.h"
+#include "CtaStraBaseCtx.h"
 #include "WtDtMgr.h"
 #include "WtCtaTicker.h"
 #include "WtHelper.h"
@@ -33,6 +34,7 @@ namespace rj = rapidjson;
 
 WtCtaEngine::WtCtaEngine()
 	: _tm_ticker(NULL)
+	, _cfg(NULL)
 {
 	
 }
@@ -40,6 +42,7 @@ WtCtaEngine::WtCtaEngine()
 
 WtCtaEngine::~WtCtaEngine()
 {
+	stop();
 	if (_tm_ticker)
 	{
 		delete _tm_ticker;
@@ -50,11 +53,35 @@ WtCtaEngine::~WtCtaEngine()
 		_cfg->release();
 }
 
+void WtCtaEngine::stop()
+{
+	if (_terminated)
+		return;
+	if (_tm_ticker)
+		_tm_ticker->stop();
+	if (_pool)
+		_pool->wait();
+	WtEngine::stop();
+	if (_tm_ticker)
+	{
+		// Preserve targets and positions without inventing an end-of-day event.
+		for (auto& item : _ctx_map)
+		{
+			auto ctx = dynamic_cast<CtaStraBaseCtx*>(item.second.get());
+			if (ctx)
+				ctx->flush_state();
+		}
+		save_datas();
+	}
+}
+
 void WtCtaEngine::run()
 {
 	_tm_ticker = new WtCtaRtTicker(this);
 	WTSVariant* cfgProd = _cfg->get("product");
 	_tm_ticker->init(_data_mgr->reader(), cfgProd->getCString("session"));
+	if (auto replay = _cfg->get("replay"))
+		_tm_ticker->set_replay(replay->getUInt32("date"), replay->getUInt32("time"), replay->getUInt32("tradingdate"));
 
 	//启动之前,先把运行中的策略落地
 	{
@@ -626,22 +653,25 @@ void WtCtaEngine::on_bar(const char* stdCode, const char* period, uint32_t times
 	thread_local static char key[64] = { 0 };
 	fmtutil::format_to(key, "{}-{}-{}", stdCode, period, times);
 
-	const SubList& sids = _bar_sub_map[key];
-	for (auto it = sids.begin(); it != sids.end(); it++)
+	auto subscription = _bar_sub_map.find(key);
+	if (subscription != _bar_sub_map.end())
 	{
-		uint32_t sid = it->first;
-		auto cit = _ctx_map.find(sid);
-		if(cit != _ctx_map.end())
+		for (auto it = subscription->second.begin(); it != subscription->second.end(); it++)
 		{
-			CtaContextPtr& ctx = (CtaContextPtr&)cit->second;
-			if (_pool)
+			uint32_t sid = it->first;
+			auto cit = _ctx_map.find(sid);
+			if(cit != _ctx_map.end())
 			{
-				_pool->schedule([ctx, stdCode, period, times, newBar]() {
+				CtaContextPtr& ctx = (CtaContextPtr&)cit->second;
+				if (_pool)
+				{
+					_pool->schedule([ctx, stdCode, period, times, newBar]() {
+						ctx->on_bar(stdCode, period, times, newBar);
+					});
+				}
+				else
 					ctx->on_bar(stdCode, period, times, newBar);
-				});
 			}
-			else
-				ctx->on_bar(stdCode, period, times, newBar);
 		}
 	}
 

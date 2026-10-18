@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtMsgQue.cpp
  * \project	WonderTrader
  *
@@ -13,7 +13,7 @@
 #ifdef _MSC_VER
 #pragma comment(lib, "Ws2_32.lib")
 #pragma comment(lib, "Mswsock.lib")
-#pragma comment(lib, "nanomsg.lib")
+#pragma comment(lib, "nng.lib")
 #endif
 
 USING_NS_WTP;

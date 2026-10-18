@@ -1,4 +1,4 @@
-﻿#include "MQManager.h"
+#include "MQManager.h"
 
 #include <spdlog/fmt/fmt.h>
 
@@ -9,7 +9,7 @@ WtUInt32 MQManager::create_server(const char* url, bool confirm)
 	MQServerPtr server(new MQServer(this));
 
 	printf("init server\r\n");
-	server->init(url, confirm);
+	if (!server->init(url, confirm)) return 0;
 
 	auto id = server->id();
 
@@ -58,7 +58,7 @@ void MQManager::log_client(WtUInt32 id, const char* message)
 WtUInt32 MQManager::create_client(const char* url, FuncMQCallback cb)
 {
 	MQClientPtr client(new MQClient(this));
-	client->init(url, cb);
+	if (!client->init(url, cb)) return 0;
 
 	auto id = client->id();
 

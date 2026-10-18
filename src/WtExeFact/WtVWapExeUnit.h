@@ -101,6 +101,9 @@ private:
 	//执行参数
 	WtOrdMon		_orders_mon;
 	uint32_t		_cancel_cnt;
+	bool _weighted_curve = false;
+	double _start_pos = 0;
+	double _start_target = 0;
 	vector<double>	VwapAim;			//分钟记，目标VWap预测 总报单量
 	//////////////////////////////////////////////////////////////////////////
 	//参数
@@ -137,7 +140,7 @@ private:
 		}
 
 		~_CalcFlag() {
-			if (_flag)
+			if (_flag && !_result)
 				_flag->exchange(false, std::memory_order_acq_rel);
 		}
 		operator bool() const { return _result; }

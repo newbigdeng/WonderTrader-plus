@@ -1,5 +1,5 @@
 #1. 确定CMake的最低版本需求
-CMAKE_MINIMUM_REQUIRED(VERSION 3.0.0)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 
 #2. 确定工程名
 PROJECT(WtPorter LANGUAGES CXX)
@@ -48,46 +48,43 @@ file(MAKE_DIRECTORY ${LIBRARY_OUTPUT_PATH}/parsers/)
 file(MAKE_DIRECTORY ${LIBRARY_OUTPUT_PATH}/traders/)
 file(MAKE_DIRECTORY ${LIBRARY_OUTPUT_PATH}/executer/)
 
-add_custom_command(TARGET WtPorter POST_BUILD
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}ParserUDP${SUFFIX} ${LIBRARY_OUTPUT_PATH}/parsers/
-	
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}ParserShm${SUFFIX} ${LIBRARY_OUTPUT_PATH}/parsers/
 
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}TraderCTP${SUFFIX} ${LIBRARY_OUTPUT_PATH}/traders/
+foreach(module ParserCTP ParserUDP ParserShm)
+    if(TARGET ${module})
+        add_dependencies(WtPorter ${module})
+        add_custom_command(TARGET WtPorter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:${module}> ${LIBRARY_OUTPUT_PATH}/parsers/
+            VERBATIM)
+    endif()
+endforeach()
 
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}TraderXTP${SUFFIX} ${LIBRARY_OUTPUT_PATH}/traders/
+foreach(module TraderCTP TraderXTP TraderMocker TraderCTPMini TraderCTPOpt TraderFemas)
+    if(TARGET ${module})
+        add_dependencies(WtPorter ${module})
+        add_custom_command(TARGET WtPorter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:${module}> ${LIBRARY_OUTPUT_PATH}/traders/
+            VERBATIM)
+    endif()
+endforeach()
 
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}TraderMocker${SUFFIX} ${LIBRARY_OUTPUT_PATH}/traders/
+foreach(module WtExeFact)
+    if(TARGET ${module})
+        add_dependencies(WtPorter ${module})
+        add_custom_command(TARGET WtPorter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:${module}> ${LIBRARY_OUTPUT_PATH}/executer/
+            VERBATIM)
+    endif()
+endforeach()
 
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}TraderCTPMini${SUFFIX} ${LIBRARY_OUTPUT_PATH}/traders/
-
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}TraderCTPOpt${SUFFIX} ${LIBRARY_OUTPUT_PATH}/traders/
-
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}TraderFemas${SUFFIX} ${LIBRARY_OUTPUT_PATH}/traders/
-
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}WtExeFact${SUFFIX} ${LIBRARY_OUTPUT_PATH}/executer/
-
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}WtDataStorage${SUFFIX} ${LIBRARY_OUTPUT_PATH}/
-
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}WtDataStorageAD${SUFFIX} ${LIBRARY_OUTPUT_PATH}/
-
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}WtRiskMonFact${SUFFIX} ${LIBRARY_OUTPUT_PATH}/
-
-	COMMAND ${CMAKE_COMMAND} -E
-	copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}WtMsgQue${SUFFIX} ${LIBRARY_OUTPUT_PATH}/
-
-	COMMENT "depends modules copied")
-
-
+foreach(module WtDataStorage WtDataStorageAD WtRiskMonFact WtMsgQue)
+    if(TARGET ${module})
+        add_dependencies(WtPorter ${module})
+        add_custom_command(TARGET WtPorter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:${module}> ${LIBRARY_OUTPUT_PATH}//
+            VERBATIM)
+    endif()
+endforeach()

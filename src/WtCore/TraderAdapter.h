@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file TraderAdapter.h
  * \project	WonderTrader
  *
@@ -121,6 +121,9 @@ public:
 	void queryFund();
 
 private:
+	uint64_t replayTime() const;
+	uint64_t (*_replay_clock)(uint32_t) = nullptr;
+	uint32_t _replay_clock_id = 0;
 	uint32_t doEntrust(WTSEntrust* entrust);
 	bool	doCancel(WTSOrderInfo* ordInfo);
 

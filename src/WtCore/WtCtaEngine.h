@@ -39,6 +39,7 @@ public:
 	virtual void on_session_end() override;
 
 	virtual void run() override;
+	virtual void stop() override;
 
 	virtual void init(WTSVariant* cfg, IBaseDataMgr* bdMgr, WtDtMgr* dataMgr, IHotMgr* hotMgr, EventNotifier* notifier) override;
 

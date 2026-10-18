@@ -447,6 +447,15 @@ WTSKlineSlice* WtDtMgr::get_kline_slice(const char* stdCode, WTSKlinePeriod peri
 		}
 		else
 		{
+			if (rawData) rawData->release();
+			// Keep the subscription when replay/newly listed contracts have no closed bars yet.
+			if (kData == NULL)
+			{
+				kData = WTSKlineData::create(stdCode, 0);
+				kData->setPeriod(period, times);
+				kData->setClosed(true);
+				_bars_cache->add(key, kData, false);
+			}
 			return NULL;
 		}
 

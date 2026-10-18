@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtPorter.cpp
  * \project	WonderTrader
  *
@@ -117,6 +117,16 @@ void config_porter(const char* cfgfile, bool isFile)
 void run_porter(bool bAsync)
 {
 	getRunner().run(bAsync);
+}
+
+bool plus_replay_flush(WtUInt32 date, WtUInt32 time)
+{
+	return getRunner().replayFlush(date, time);
+}
+
+bool query_trade_account(const char* trader)
+{
+    return getRunner().requestAccount(trader);
 }
 
 void release_porter()

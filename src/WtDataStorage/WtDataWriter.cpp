@@ -1,4 +1,4 @@
-﻿#include "WtDataWriter.h"
+#include "WtDataWriter.h"
 
 #include "../Includes/WTSSessionInfo.hpp"
 #include "../Includes/WTSContractInfo.hpp"
@@ -79,7 +79,9 @@ WtDataWriter::_TaskInfo::~_TaskInfo()
 
 
 WtDataWriter::WtDataWriter()
-	: _terminated(false)
+	: _tick_cache_block(NULL)
+	, _terminated(false)
+	, _proc_terminated(false)
 	, _save_tick_log(false)
 	, _log_group_size(1000)
 	, _disable_day(false)
@@ -98,6 +100,7 @@ WtDataWriter::WtDataWriter()
 
 WtDataWriter::~WtDataWriter()
 {
+	release();
 }
 
 bool WtDataWriter::isSessionProceeded(const char* sid)
@@ -172,42 +175,63 @@ bool WtDataWriter::init(WTSVariant* params, IDataWriterSink* sink)
 
 void WtDataWriter::release()
 {
-	_terminated = true;
-	if (_proc_thrd)
 	{
-		_proc_cond.notify_all();
-		_proc_thrd->join();
+		StdUniqueLock lock(_task_mtx);
+		StdUniqueLock checkLock(_check_mtx);
+		_terminated = true;
 	}
+	_task_cond.notify_all();
+	_check_cond.notify_all();
+	if (_task_thrd && _task_thrd->joinable())
+		_task_thrd->join();
+	_task_thrd.reset();
+	if (_proc_chk && _proc_chk->joinable())
+		_proc_chk->join();
+	_proc_chk.reset();
+	{
+		StdUniqueLock lock(_proc_mtx);
+		_proc_terminated = true;
+		_proc_cond.notify_all();
+	}
+	if (_proc_thrd && _proc_thrd->joinable())
+		_proc_thrd->join();
+	_proc_thrd.reset();
 
 	for(auto& v : _rt_ticks_blocks)
 	{
 		delete v.second;
 	}
+	_rt_ticks_blocks.clear();
 
 	for (auto& v : _rt_trans_blocks)
 	{
 		delete v.second;
 	}
+	_rt_trans_blocks.clear();
 
 	for (auto& v : _rt_orddtl_blocks)
 	{
 		delete v.second;
 	}
+	_rt_orddtl_blocks.clear();
 
 	for (auto& v : _rt_ordque_blocks)
 	{
 		delete v.second;
 	}
+	_rt_ordque_blocks.clear();
 
 	for (auto& v : _rt_min1_blocks)
 	{
 		delete v.second;
 	}
+	_rt_min1_blocks.clear();
 
 	for (auto& v : _rt_min5_blocks)
 	{
 		delete v.second;
 	}
+	_rt_min5_blocks.clear();
 }
 
 /*
@@ -577,24 +601,22 @@ void WtDataWriter::pushTask(const TaskInfo& task)
 		return;
 
 	StdUniqueLock lck(_task_mtx);
+	if (_terminated)
+		return;
 	_tasks.emplace(task);
 	_task_cond.notify_all();
 
 	if (_task_thrd == NULL)
 	{
 		_task_thrd.reset(new StdThread([this]() {
-			while (!_terminated)
+			for (;;)
 			{
-				if (_tasks.empty())
-				{
-					StdUniqueLock lck(_task_mtx);
-					_task_cond.wait(_task_mtx);
-					continue;
-				}
-
 				std::queue<TaskInfo> tempQueue;
 				{
 					StdUniqueLock lck(_task_mtx);
+					_task_cond.wait(lck, [this]{ return _terminated || !_tasks.empty(); });
+					if (_tasks.empty())
+						break;
 					tempQueue.swap(_tasks);
 				}
 
@@ -1590,7 +1612,11 @@ void WtDataWriter::check_loop()
 	uint32_t expire_secs = 600;
 	while(!_terminated)
 	{
-		std::this_thread::sleep_for(std::chrono::seconds(10));
+		{
+			StdUniqueLock lock(_check_mtx);
+			if (_check_cond.wait_for(lock, std::chrono::seconds(10), [this]{ return _terminated.load(); }))
+				break;
+		}
 		/*
 		 *	By Wesley @ 2022.04.18
 		 *	如果收盘作业线程已经启动，则直接退出检查线程
@@ -2139,19 +2165,15 @@ uint32_t WtDataWriter::dump_bars_to_file(WTSContractInfo* ct)
 
 void WtDataWriter::proc_loop()
 {
-	while (!_terminated)
+	for (;;)
 	{
-		if(_proc_que.empty())
-		{
-			StdUniqueLock lock(_proc_mtx);
-			_proc_cond.wait(_proc_mtx);
-			continue;
-		}
-
 		std::string fullcode;
 		try
 		{
 			StdUniqueLock lock(_proc_mtx);
+			_proc_cond.wait(lock, [this]{ return _proc_terminated || !_proc_que.empty(); });
+			if (_proc_que.empty())
+				break;
 			fullcode = _proc_que.front().c_str();
 			_proc_que.pop();
 		}
@@ -2306,7 +2328,9 @@ void WtDataWriter::proc_loop()
 				catch (...)
 				{
 					pipe_writer_log(_sink, LL_ERROR, "Error occured while clearing rt cache files，retry in 300s");
-					std::this_thread::sleep_for(std::chrono::seconds(300));
+					StdUniqueLock lock(_proc_mtx);
+					if (_proc_cond.wait_for(lock, std::chrono::seconds(300), [this]{ return _proc_terminated; }))
+						break;
 					continue;
 				}
 			} while (true);

@@ -1,7 +1,10 @@
-﻿#include <string>
+#ifdef _WIN32
+#error This isolated adapter is verified for Linux x86_64 only
+#endif
+#include <string>
 #include <map>
 //v6.3.15
-#include "../API/CTP6.3.15/ThostFtdcTraderApi.h"
+#include "../API/CTP6.7.13-traderapi/ThostFtdcTraderApi.h"
 #include "TraderSpi.h"
 
 #include "../Share/IniHelper.hpp"
@@ -41,7 +44,7 @@ typedef std::map<std::string, std::string>	SymbolMap;
 SymbolMap	MAP_NAME;
 SymbolMap	MAP_SESSION;
 
-typedef CThostFtdcTraderApi* (*CTPCreator)(const char *);
+typedef CThostFtdcTraderApi* (*CTPCreator)(const char *, bool);
 CTPCreator		g_ctpCreator = NULL;
 
 // 请求编号
@@ -232,7 +235,7 @@ int run(const char* cfgfile, bool bAsync = false, bool isFile = true)
 	// 初始化UserApi
 	DllHandle dllInst = DLLHelper::load_library(MODULE_NAME.c_str());
 	if (dllInst == NULL)
-		printf("Loading module %s failed\r\n", MODULE_NAME.c_str());
+		{ printf("Loading module %s failed\r\n", MODULE_NAME.c_str()); return -1; }
 #ifdef _WIN32
 #	ifdef _WIN64
 	g_ctpCreator = (CTPCreator)DLLHelper::get_symbol(dllInst, "?CreateFtdcTraderApi@CThostFtdcTraderApi@@SAPEAV1@PEBD@Z");
@@ -240,14 +243,15 @@ int run(const char* cfgfile, bool bAsync = false, bool isFile = true)
 	g_ctpCreator = (CTPCreator)DLLHelper::get_symbol(dllInst, "?CreateFtdcTraderApi@CThostFtdcTraderApi@@SAPAV1@PBD@Z");
 #	endif
 #else
-	g_ctpCreator = (CTPCreator)DLLHelper::get_symbol(dllInst, "_ZN19CThostFtdcTraderApi19CreateFtdcTraderApiEPKc");
+	g_ctpCreator = (CTPCreator)DLLHelper::get_symbol(dllInst, "_ZN19CThostFtdcTraderApi19CreateFtdcTraderApiEPKcb");
 #endif
 	if (g_ctpCreator == NULL)
-		printf("Loading CreateFtdcTraderApi failed\r\n");
+		{ printf("Loading CreateFtdcTraderApi failed\r\n"); return -1; }
 
 	std::string flowPath = fmtutil::format("./CTPFlow/{}/{}/", BROKER_ID, INVESTOR_ID);
 	boost::filesystem::create_directories(flowPath.c_str());
-	pUserApi = g_ctpCreator(flowPath.c_str());
+	pUserApi = g_ctpCreator(flowPath.c_str(), true);
+	if (!pUserApi) return -1;
 	CTraderSpi* pUserSpi = new CTraderSpi();
 	pUserApi->RegisterSpi((CThostFtdcTraderSpi*)pUserSpi);			// 注册事件类
 	pUserApi->SubscribePublicTopic(THOST_TERT_QUICK);					// 注册公有流

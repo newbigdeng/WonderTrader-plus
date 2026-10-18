@@ -29,6 +29,13 @@ WtVWapExeUnit::WtVWapExeUnit()
 	, _cancel_times(0)
 	, _begin_time(0)
 	, _end_time(0)
+	, _sess_info(NULL)
+	, _tail_secs(0)
+	, _fire_span(1)
+	, _min_open_lots(1)
+	, _last_tick_time(0)
+	, _last_place_time(0)
+	, _in_calc(false)
 	,isCanCancel(true)
 {
 }
@@ -40,6 +47,8 @@ WtVWapExeUnit::~WtVWapExeUnit()
 
 	if (_comm_info)
 		_comm_info->release();
+	if (_sess_info)
+		_sess_info->release();
 }
 inline double get_real_target(double _target) {
 	if (_target == DBL_MAX)
@@ -115,11 +124,28 @@ void WtVWapExeUnit::init(ExecuteContext * ctx, const char * stdCode, WTSVariant 
 	_order_lots = cfg->getDouble("lots");		//单次发单手数
 	if (cfg->has("minopenlots"))
 	_min_open_lots = cfg->getDouble("minopenlots");	//最小开仓数量
-	_fire_span = (_total_secs - _tail_secs) / _total_times;		//单次发单时间间隔,要去掉尾部时间计算,这样的话,最后剩余的数量就有一个兜底发单的机制了
+	_total_secs = calTmSecs(_begin_time, _end_time);
+	_fire_span = _total_times == 0 || _tail_secs >= _total_secs ? 1 : std::max(1U, (_total_secs - _tail_secs) / _total_times);		//单次发单时间间隔,要去掉尾部时间计算,这样的话,最后剩余的数量就有一个兜底发单的机制了
 
 	ctx->writeLog(fmt::format("执行单元WtVWapExeUnit[{}] 初始化完成,订单超时 {} 秒,执行时限 {} 秒,收尾时间 {} 秒", stdCode, _ord_sticky, _total_secs, _tail_secs).c_str());
 	_total_secs = calTmSecs(_begin_time, _end_time);//执行总时间：秒
 
+	if (cfg->has("volume_weights"))
+	{
+		WTSVariant* weights = cfg->get("volume_weights");
+		double total = 0;
+		for (uint32_t i = 0; i < weights->size(); ++i)
+		{
+			total += weights->get(i)->asDouble();
+			VwapAim.push_back(total);
+		}
+		if (total > 0)
+		{
+			for (double& weight : VwapAim) weight /= total;
+			_weighted_curve = true;
+		}
+		return;
+	}
 	std::string filename = "Vwap_";
 	filename += _comm_info->getName();
 	filename += ".txt";
@@ -170,7 +196,7 @@ void WtVWapExeUnit::on_order(uint32_t localid, const char * stdCode, bool isBuy,
 			_ctx->writeLog(fmtutil::format("Order {} of {} canceled, re_fire will be done", localid, stdCode));
 			_cancel_times++;
 			//撤单以后重发,一般是加点重发;对最小下单量的校验
-			fire_at_once(max(_min_open_lots, _this_target - realPos));
+			fire_at_once(_this_target - realPos);
 		}
 	}
 
@@ -254,7 +280,7 @@ void WtVWapExeUnit::on_tick(WTSTickData * newTick)
 	}
 	else
 	{
-		uint64_t now = TimeUtils::getLocalTimeNow();
+		uint64_t now = _ctx->getCurTime();
 		bool hasCancel = false;
 		if (_ord_sticky != 0 && _orders_mon.has_order())
 		{
@@ -366,27 +392,47 @@ void WtVWapExeUnit::do_calc()
 		return;
 	}
 	_last_tick_time = curTickTime;
-	double InminsTm = calTmStamp(_last_tick->actiontime());//当前tick属于vwap240分钟内的第几(-1)分钟
-	double aimQty = VwapAim[InminsTm];//取到对应时刻的目标vwapaim （递增）
-
-	uint32_t leftTimes = _total_times - _fired_times;
-	_ctx->writeLog(fmt::format("第 {} 次发单", _fired_times+1).c_str());
-	_Vwap_vol = aimQty - curPos;//若在本分钟发单，对应的VWapVol
-	bool bNeedShowHand = false;
 	double curQty = 0;
-	if (leftTimes == 0 && !decimal::eq(diffQty, 0))
+	bool bNeedShowHand = false;
+	if (_weighted_curve)
 	{
-		bNeedShowHand = true;
-		curQty = max(diffQty, _min_open_lots);
+		const uint32_t seconds = (_last_tick->actiontime() / 10000000) * 3600 + (_last_tick->actiontime() / 100000 % 100) * 60 + (_last_tick->actiontime() / 1000 % 100);
+		const uint32_t beginSeconds = (_begin_time / 100) * 3600 + (_begin_time % 100) * 60;
+		if (seconds < beginSeconds || VwapAim.empty() || _total_secs == 0)
+			return;
+		const double elapsed = seconds - beginSeconds;
+		bNeedShowHand = elapsed >= _total_secs - std::min(_tail_secs, _total_secs);
+		double fraction = 1.0;
+		if (!bNeedShowHand)
+		{
+			const double bucket = elapsed / _total_secs * VwapAim.size();
+			const size_t index = std::min(static_cast<size_t>(bucket), VwapAim.size() - 1);
+			const double before = index == 0 ? 0 : VwapAim[index - 1];
+			fraction = before + (VwapAim[index] - before) * (bucket - index);
+		}
+		const double delta = _start_target - _start_pos;
+		const double due = bNeedShowHand ? abs(delta) : floor(abs(delta) * fraction + 1e-9);
+		const double aim = _start_pos + due * (delta >= 0 ? 1 : -1);
+		curQty = aim - realPos;
+		if (curQty * diffQty <= 0) return;
+		curQty = std::min(abs(curQty), abs(diffQty)) * (diffQty > 0 ? 1 : -1);
 	}
-	else {
-		curQty = max(_Vwap_vol, _min_open_lots)* abs(diffQty) / diffQty;//curqty=单位预测量sum
+	else
+	{
+		const size_t minute = static_cast<size_t>(calTmStamp(_last_tick->actiontime()));
+		if (minute >= VwapAim.size()) return;
+		const double aimQty = VwapAim[minute];
+		const uint32_t leftTimes = _fired_times >= _total_times ? 0 : _total_times - _fired_times;
+		bNeedShowHand = leftTimes == 0;
+		curQty = bNeedShowHand ? diffQty : std::min(abs(diffQty), std::max(abs(aimQty - realPos), _min_open_lots)) * (diffQty > 0 ? 1 : -1);
 	}
+	if (decimal::eq(curQty, 0)) return;
 	//设定本轮目标仓位
 	_this_target = realPos + curQty;
 
 	WTSTickData* curTick = _last_tick;
-	uint64_t now = TimeUtils::getLocalTimeNow();
+	curTick->retain();
+	uint64_t now = _ctx->getCurTime();
 	bool isBuy = decimal::gt(diffQty, 0);
 	double targetPx = 0;
 	//根据价格模式设置,确定委托基准价格: 0-最新价,1-最优价,2-对手价
@@ -450,7 +496,7 @@ void WtVWapExeUnit::fire_at_once(double qty)
 	_last_tick->retain();
 	WTSTickData* curTick = _last_tick;
 	const char* code = _code.c_str();
-	uint64_t now = TimeUtils::getLocalTimeNow();
+	uint64_t now = _ctx->getCurTime();
 	bool isBuy = decimal::gt(qty, 0);
 	double targetPx = 0;
 	//根据价格模式设置,确定委托基准价格: 0-最新价,1-最优价,2-对手价
@@ -499,6 +545,8 @@ void WtVWapExeUnit::set_position(const char * stdCode, double newVol)
 	if (decimal::eq(newVol, _target_pos))
 		return;
 	
+	_start_pos = _ctx->getPosition(stdCode);
+	_start_target = get_real_target(newVol);
 	_target_pos = newVol;
 	
 	_fired_times = 0;//已执行次数
@@ -508,4 +556,5 @@ void WtVWapExeUnit::set_position(const char * stdCode, double newVol)
 
 void WtVWapExeUnit::on_channel_lost()
 {
+	_channel_ready = false;
 }

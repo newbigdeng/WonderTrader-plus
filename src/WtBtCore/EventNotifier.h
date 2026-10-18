@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file EventCaster.h
  * \project	WonderTrader
  *
@@ -15,11 +15,11 @@
 #include "../Includes/WTSObject.hpp"
 #include "../Share/StdUtils.hpp"
 
-typedef unsigned long(*FuncCreateMQServer)(const char*, bool);
-typedef void(*FuncDestroyMQServer)(unsigned long);
-typedef void(*FundPublishMessage)(unsigned long, const char*, const char*, unsigned long);
+typedef uint32_t(*FuncCreateMQServer)(const char*, bool);
+typedef void(*FuncDestroyMQServer)(uint32_t);
+typedef void(*FundPublishMessage)(uint32_t, const char*, const char*, uint32_t);
 
-typedef void(*FuncLogCallback)(unsigned long, const char*, bool);
+typedef void(*FuncLogCallback)(uint32_t, const char*, bool);
 typedef void(*FuncRegCallbacks)(FuncLogCallback);
 
 
@@ -31,6 +31,7 @@ class EventNotifier
 public:
 	EventNotifier();
 	~EventNotifier();
+	void stop();
 
 public:
 	bool	init(WTSVariant* cfg);

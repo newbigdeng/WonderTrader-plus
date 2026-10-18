@@ -1,5 +1,5 @@
 #1. 确定CMake的最低版本需求
-CMAKE_MINIMUM_REQUIRED(VERSION 3.0.0)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.10)
 
 #2. 确定工程名
 PROJECT(WtDtPorter LANGUAGES CXX)
@@ -49,24 +49,23 @@ ELSE (GNUCC)
 ENDIF ()
 
 file(MAKE_DIRECTORY ${LIBRARY_OUTPUT_PATH}/parsers/)
-add_custom_command(TARGET WtDtPorter POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E
-		copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}ParserCTP${SUFFIX} ${LIBRARY_OUTPUT_PATH}/parsers/
 
-		COMMAND ${CMAKE_COMMAND} -E
-		copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}ParserXTP${SUFFIX} ${LIBRARY_OUTPUT_PATH}/parsers/
+foreach(module ParserCTP ParserXTP ParserFemas ParserCTPMini)
+    if(TARGET ${module})
+        add_dependencies(WtDtPorter ${module})
+        add_custom_command(TARGET WtDtPorter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:${module}> ${LIBRARY_OUTPUT_PATH}/parsers/
+            VERBATIM)
+    endif()
+endforeach()
 
-		COMMAND ${CMAKE_COMMAND} -E
-		copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}ParserFemas${SUFFIX} ${LIBRARY_OUTPUT_PATH}/parsers/
-
-		COMMAND ${CMAKE_COMMAND} -E
-		copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}ParserCTPMini${SUFFIX} ${LIBRARY_OUTPUT_PATH}/parsers/
-
-		COMMAND ${CMAKE_COMMAND} -E
-		copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}WtDataStorage${SUFFIX} ${LIBRARY_OUTPUT_PATH}/
-
-		COMMAND ${CMAKE_COMMAND} -E
-		copy ${CMAKE_BINARY_DIR}/build_${PLATFORM}/${CMAKE_BUILD_TYPE}/bin/${PREFIX}WtDataStorageAD${SUFFIX} ${LIBRARY_OUTPUT_PATH}/
-
-		COMMENT "depends modules copied")
-		
+foreach(module WtDataStorage WtDataStorageAD)
+    if(TARGET ${module})
+        add_dependencies(WtDtPorter ${module})
+        add_custom_command(TARGET WtDtPorter POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                $<TARGET_FILE:${module}> ${LIBRARY_OUTPUT_PATH}//
+            VERBATIM)
+    endif()
+endforeach()

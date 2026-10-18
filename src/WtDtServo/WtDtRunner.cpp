@@ -29,9 +29,7 @@ WtDtRunner::WtDtRunner()
 	: _data_store(NULL)
 	, _is_inited(false)
 {
-	install_signal_hooks([](const char* message) {
-		WTSLogger::error(message);
-	});
+	// This shared library is embedded in Python/ASGI. The host owns process signals.
 }
 
 

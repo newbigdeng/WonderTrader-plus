@@ -13,6 +13,7 @@ public:
 public:
 	bool	init(WTSVariant* config, IHotMgr* hotMgr, IBaseDataMgr* bdMgr, DataManager* dataMgr);
 	void	handle_quote(WTSTickData* newTick);
+	void stop();
 
 public:
 	inline IHotMgr*			get_hot_mgr() { return _hot_mgr; }

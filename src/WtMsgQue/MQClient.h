@@ -1,73 +1,33 @@
-﻿/*!
- * \file EventCaster.h
- * \project	WonderTrader
- *
- * \author Wesley
- * \date 2020/03/30
- *
- * \brief UDP广播对象定义
- */
+/* WonderTrader, Wesley Liu. NNG transport migration, 2026-10-15. */
 #pragma once
+#include <atomic>
+#include <set>
+#include <nng/nng.h>
 #include "PorterDefs.h"
-#include <queue>
-
-#include "../Includes/WTSMarcos.h"
-#include "../Includes/FasterDefs.h"
 #include "../Share/StdUtils.hpp"
-
 NS_WTP_BEGIN
 class MQManager;
-
 class MQClient
 {
 public:
-	MQClient(MQManager* mgr);
-	~MQClient();
-
+    MQClient(MQManager* mgr);
+    ~MQClient();
+    uint32_t id() const { return _id; }
+    bool init(const char* url, FuncMQCallback cb);
+    void start();
+    void sub_topic(const char* topic);
 private:
-	void	extract_buffer();
-
-	inline bool	is_allowed(const char* topic)
-	{
-		if (_topics.empty())
-			return true;
-
-		auto it = _topics.find(topic);
-		if (it != _topics.end())
-			return true;
-
-		return false;
-	}
-
-public:
-	inline uint32_t id() const { return _id; }
-
-	bool	init(const char* url, FuncMQCallback cb);
-
-	void	start();
-
-	inline void	sub_topic(const char* topic)
-	{
-		_topics.insert(topic);
-	}
-
-private:
-	std::string		m_strURL;
-	bool			m_bReady;
-	int				_sock;
-	MQManager*		_mgr;
-	uint32_t		_id;
-
-	StdThreadPtr	m_thrdRecv;
-	bool			m_bTerminated;
-	int64_t			m_iCheckTime;
-	bool			m_bNeedCheck;
-
-	std::string		_buffer;
-	FuncMQCallback	_cb_message;
-
-	wt_hashset<std::string> _topics;
-	char			_recv_buf[1024 * 1024];
+    void receive();
+    void extract_message(const char* data, size_t size);
+    bool is_allowed(const char* topic);
+    nng_socket _sock = NNG_SOCKET_INITIALIZER;
+    bool m_bReady = false;
+    MQManager* _mgr;
+    uint32_t _id;
+    StdThreadPtr m_thrdRecv;
+    std::atomic<bool> m_bTerminated{false};
+    FuncMQCallback _cb_message = nullptr;
+    std::mutex _topicMutex;
+    std::set<std::string> _topics;
 };
-
 NS_WTP_END

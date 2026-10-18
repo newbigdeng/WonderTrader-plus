@@ -8,6 +8,7 @@
  * \brief 状态控制器定义
  */
 #pragma once
+#include <atomic>
 #include <vector>
 #include "../Share/StdUtils.hpp"
 #include "../Includes/FasterDefs.h"
@@ -129,5 +130,5 @@ private:
 
 	StdThreadPtr	_thrd;
 
-	bool			_stopped;
+	std::atomic<bool>	_stopped;
 };

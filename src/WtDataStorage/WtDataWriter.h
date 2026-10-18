@@ -1,4 +1,5 @@
-﻿#pragma once
+#pragma once
+#include <atomic>
 #include "DataDefine.h"
 
 #include "../Includes/FasterDefs.h"
@@ -195,7 +196,10 @@ private:
 	std::queue<std::string> _proc_que;
 	StdThreadPtr	_proc_thrd;
 	StdThreadPtr	_proc_chk;
-	bool			_terminated;
+	std::atomic<bool>	_terminated;
+	bool	_proc_terminated;
+	StdUniqueMutex _check_mtx;
+	StdCondVariable _check_cond;
 
 	bool			_save_tick_log;
 	bool			_skip_notrade_tick;

@@ -9,6 +9,7 @@
  */
 #pragma once
 #include <string>
+#include <atomic>
 #include <set>
 #include "HisDataMgr.h"
 #include "../WtDataStorage/DataDefine.h"
@@ -527,8 +528,8 @@ private:
 	//缓存自动清理天数
 	uint32_t		_cache_clear_days;
 
-	bool			_running;
-	bool			_terminated;
+	std::atomic<bool> _running;
+	std::atomic<bool> _terminated;
 	//////////////////////////////////////////////////////////////////////////
 	//手续费模板
 	typedef struct _FeeItem

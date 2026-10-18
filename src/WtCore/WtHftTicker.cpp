@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtHftTicker.cpp
  * \project	WonderTrader
  *
@@ -37,6 +37,7 @@ WtHftRtTicker::WtHftRtTicker(WtHftEngine* engine)
 
 WtHftRtTicker::~WtHftRtTicker()
 {
+	stop();
 }
 
 void WtHftRtTicker::init(IDataReader* store, const char* sessionID)
@@ -68,7 +69,7 @@ void WtHftRtTicker::trigger_price(WTSTickData* curTick)
 
 void WtHftRtTicker::on_tick(WTSTickData* curTick)
 {
-	if (_thrd == NULL)
+	if (_thrd == NULL && !_replay)
 	{
 		trigger_price(curTick);
 		return;
@@ -84,6 +85,14 @@ void WtHftRtTicker::on_tick(WTSTickData* curTick)
 		return;
 	}
 
+	if (_replay && curTick->tradingdate() != _engine->getTradingDate())
+	{
+		_engine->on_session_end();
+		_cur_pos = 0;
+		_last_emit_pos = 0;
+		_engine->set_trading_date(curTick->tradingdate());
+		_engine->on_session_begin();
+	}
 	_date = uDate;
 	_time = uTime;
 
@@ -103,6 +112,7 @@ void WtHftRtTicker::on_tick(WTSTickData* curTick)
 	{
 		//如果当前时间是0, 则直接赋值即可
 		_cur_pos = minutes;
+		if (_replay) { _engine->set_date_time(_date, curMin, curSec, rawMin); trigger_price(curTick); }
 	}
 	else if (_cur_pos < minutes)
 	{
@@ -131,6 +141,7 @@ void WtHftRtTicker::on_tick(WTSTickData* curTick)
 			}
 		}
 
+		if (_replay) _engine->set_date_time(_date, curMin, curSec, rawMin);
 		trigger_price(curTick);
 		if (_engine)
 		{
@@ -143,6 +154,7 @@ void WtHftRtTicker::on_tick(WTSTickData* curTick)
 	else
 	{
 		//如果分钟数还是一致的, 则直接触发行情和时间即可
+		if (_replay) _engine->set_date_time(_date, curMin, curSec, rawMin);
 		trigger_price(curTick);
 		if (_engine)
 			_engine->set_date_time(_date, curMin, curSec, rawMin);
@@ -159,12 +171,14 @@ void WtHftRtTicker::run()
 	if (_thrd)
 		return;
 
-	uint32_t curTDate = _engine->get_basedata_mgr()->calcTradingDate(_s_info->id(), _engine->get_date(), _engine->get_min_time(), true);
+	if (_replay) _engine->set_date_time(_date, _time / 100000, _time % 100000);
+	uint32_t curTDate = _replay ? _replay_tdate : _engine->get_basedata_mgr()->calcTradingDate(_s_info->id(), _engine->get_date(), _engine->get_min_time(), true);
 	_engine->set_trading_date(curTDate);
 
 	_engine->on_init();
 
 	_engine->on_session_begin();
+	if (_replay) return; // The historical stream alone advances time and closes bars.
 
 	//先检查当前时间, 如果大于
 	uint32_t offTime = _s_info->offsetTime(_engine->get_min_time(), true);
@@ -254,6 +268,7 @@ void WtHftRtTicker::run()
 void WtHftRtTicker::stop()
 {
 	_stopped = true;
-	if (_thrd)
+	if (_thrd && _thrd->joinable())
 		_thrd->join();
+	_thrd.reset();
 }

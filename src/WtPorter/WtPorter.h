@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file WtPorter.h
  * \project	WonderTrader
  *
@@ -56,6 +56,8 @@ extern "C"
 	EXPORT_FLAG	bool		reg_exe_factories(const char* factFolder);
 
 	EXPORT_FLAG	void		release_porter();
+	EXPORT_FLAG bool plus_replay_flush(WtUInt32 date, WtUInt32 time);
+	EXPORT_FLAG bool query_trade_account(const char* trader);
 
 	EXPORT_FLAG	bool		create_ext_parser(const char* id);
 

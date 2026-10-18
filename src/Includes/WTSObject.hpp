@@ -10,6 +10,7 @@
 #pragma once
 #include <stdint.h>
 #include <atomic>
+#include <memory>
 #include <boost/smart_ptr/detail/spinlock.hpp>
 
 #include "WTSMarcos.h"
@@ -53,60 +54,41 @@ protected:
 	volatile std::atomic<uint32_t>	m_uRefs;
 };
 
+// Objects retained by another thread must outlive their allocating thread.
 template<typename T>
 class WTSPoolObject : public WTSObject
 {
 private:
 	typedef ObjectPool<T> MyPool;
-	MyPool*			_pool;
-	SpinMutex*	_mutex;
+	struct PoolState
+	{
+		MyPool pool;
+		SpinMutex mutex;
+	};
+	std::shared_ptr<PoolState> _pool;
 
 public:
-	WTSPoolObject():_pool(NULL){}
+	WTSPoolObject() = default;
 	virtual ~WTSPoolObject() {}
 
-public:
-	static T*	allocate()
+	static T* allocate()
 	{
-		/*
-		 *	By Wesley @ 2022.06.14
-		 *	有用户反馈，这里使用了thread_local，线程销毁的话，内存池也销毁了
-		 *	该用户在Trader里复现了这个bug，如果Trader底层销毁了一个API对象实例
-		 *	那么这里内存池就已经析构了，如果有在系统中存储（retain）Trader创建的对象（WTSOrderInfo等），则会出现访问越界的问题
-		 *	这里如果去掉thread_local，改成纯静态的，可能多线程并发的场景下也会有一些问题
-		 *	总之如果要彻底安全，那么可能需要加一把锁才行，但是这样会带来性能开销
-		 *	所以注释一下，如果有问题的可以参考一下
-		 */
-		thread_local static MyPool		pool;
-		thread_local static SpinMutex	mtx;
-
-		mtx.lock();
-		T* ret = pool.construct();
-		mtx.unlock();
-		ret->_pool = &pool;
-		ret->_mutex = &mtx;
+		thread_local static std::shared_ptr<PoolState> pool(new PoolState);
+		SpinLock lock(pool->mutex);
+		T* ret = pool->pool.construct();
+		if (ret)
+			ret->_pool = pool;
 		return ret;
 	}
 
-public:
 	virtual void release() override
 	{
-		if (m_uRefs == 0)
-			return;
-
-		try
+		if (m_uRefs.fetch_sub(1) == 1)
 		{
-			uint32_t cnt = m_uRefs.fetch_sub(1);
-			if (cnt == 1)
-			{
-				_mutex->lock();
-				_pool->destroy((T*)this);
-				_mutex->unlock();
-			}
-		}
-		catch (...)
-		{
-
+			// Keep both pool and lock alive through this object's destruction.
+			auto pool = _pool;
+			SpinLock lock(pool->mutex);
+			pool->pool.destroy(static_cast<T*>(this));
 		}
 	}
 };

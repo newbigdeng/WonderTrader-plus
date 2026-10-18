@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file ParserUDP.cpp
  * \project	WonderTrader
  *
@@ -81,7 +81,7 @@ extern "C"
 ParserUDP::ParserUDP()
 	: _b_socket(NULL)
 	, _s_socket(NULL)
-	, _strand(_io_service)
+	, _strand(make_strand(_io_service))
 	, _stopped(false)
 	, _sink(NULL)
 	, _connecting(false)
@@ -92,6 +92,7 @@ ParserUDP::ParserUDP()
 
 ParserUDP::~ParserUDP()
 {
+	release();
 }
 
 bool ParserUDP::init( WTSVariant* config )
@@ -103,7 +104,7 @@ bool ParserUDP::init( WTSVariant* config )
 	if (_gpsize == 0)
 		_gpsize = 1000;
 
-	ip::address addr = ip::address::from_string(_hots);
+	ip::address addr = ip::make_address(_hots);
 	_server_ep = ip::udp::endpoint(addr, _sport);
 
 	_broad_ep = ip::udp::endpoint(ip::address_v4::any(), _bport);
@@ -113,7 +114,8 @@ bool ParserUDP::init( WTSVariant* config )
 
 void ParserUDP::release()
 {
-	
+	disconnect();
+	_sink = NULL;
 }
 
 bool ParserUDP::reconnect(uint32_t flag /* = 3 */)
@@ -243,9 +245,11 @@ void ParserUDP::handle_write(const boost::system::error_code& e)
 
 bool ParserUDP::connect()
 {
+	_stopped = false;
+	_io_service.restart();
 	if(reconnect(3))
 	{
-		_thrd_parser.reset(new StdThread(boost::bind(&io_service::run, &_io_service)));
+		_thrd_parser.reset(new StdThread([this] { _io_service.run(); }));
 	}
 	else
 	{
@@ -257,16 +261,27 @@ bool ParserUDP::connect()
 
 bool ParserUDP::disconnect()
 {
-	if(_b_socket != NULL)
+	_stopped = true;
+	_io_service.stop();
+	if (_thrd_parser && _thrd_parser->joinable())
+		_thrd_parser->join();
+	_thrd_parser.reset();
+	// Socket callbacks have finished; it is now safe to release their buffers.
+	boost::system::error_code ec;
+	if (_b_socket)
 	{
-		_b_socket->close();
+		_b_socket->close(ec);
 		delete _b_socket;
 		_b_socket = NULL;
 	}
-
-	_stopped = true;
-	_strand.post(boost::bind(&ParserUDP::doOnDisconnected, this));
-
+	if (_s_socket)
+	{
+		_s_socket->close(ec);
+		delete _s_socket;
+		_s_socket = NULL;
+	}
+	_s_inited = false;
+	_connecting = false;
 	return true;
 }
 

@@ -349,9 +349,17 @@ void HftMocker::on_tick(const char* stdCode, WTSTickData* newTick)
 
 	update_dyn_profit(stdCode, newTick);
 
-	OrderIDs all_ids;
-	for (auto it = _orders.begin(); it != _orders.end(); it++)
-		all_ids.push_back(it->first);
+	auto match_orders = [this]() {
+		StdLocker<StdRecurMutex> lock(_mtx_ords);
+		OrderIDs ids;
+		ids.reserve(_orders.size());
+		for (const auto& item : _orders)
+			ids.emplace_back(item.first);
+		// Orders created by matching callbacks wait for the next matching pass.
+		for (uint32_t localid : ids)
+			if (procOrder(localid))
+				_orders.erase(localid);
+	};
 	//如果开启了同tick撮合，则先触发策略的ontick，再处理订单
 	//如果没开启同tick撮合，则先处理订单，再触发策略的ontick
 	if (_match_this_tick)
@@ -369,42 +377,11 @@ void HftMocker::on_tick(const char* stdCode, WTSTickData* newTick)
 
 		procTask();
 
-		if (!_orders.empty())
-		{
-			StdLocker<StdRecurMutex> lock(_mtx_ords);
-			OrderIDs ids;
-			for (uint32_t localid : all_ids)
-			{
-				bool bNeedErase = procOrder(localid);
-				if (bNeedErase)
-					ids.emplace_back(localid);
-			}
-
-			for (uint32_t localid : ids)
-			{
-				_orders.erase(localid);
-			}
-		}
+		match_orders();
 	}
 	else
 	{
-		if (!_orders.empty())
-		{
-			StdLocker<StdRecurMutex> lock(_mtx_ords);
-			OrderIDs ids;
-			for (uint32_t localid : all_ids)
-			{
-				bool bNeedErase = procOrder(localid);
-				if (bNeedErase)
-					ids.emplace_back(localid);
-			}
-
-			for (uint32_t localid : ids)
-			{
-				auto it = _orders.find(localid);
-				_orders.erase(it);
-			}
-		}
+		match_orders();
 
 		if (_has_hook && _hook_valid)
 		{
@@ -537,7 +514,7 @@ double HftMocker::stra_get_undone(const char* stdCode)
 		OrderInfoPtr ordInfo = it->second;
 		if (strcmp(ordInfo->_code, stdCode) == 0)
 		{
-			ret += ordInfo->_left * ordInfo->_isBuy ? 1 : -1;
+			ret += ordInfo->_left * (ordInfo->_isBuy ? 1 : -1);
 		}
 	}
 
@@ -725,7 +702,10 @@ bool HftMocker::procOrder(uint32_t localid)
 	double curPx = curTick->price();
 	double orderQty = ordInfo->_isBuy ? curTick->askqty(0) : curTick->bidqty(0);	//看对手盘的数量
 	if (decimal::eq(orderQty, 0.0))
+	{
+		curTick->release();
 		return false;
+	}
 
 	if (!_use_newpx)
 	{

@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file TraderAdapter.cpp
  * \project	WonderTrader
  *
@@ -16,6 +16,13 @@
 #include "../Includes/RiskMonDefs.h"
 
 #include <atomic>
+#include <cmath>
+#include <mutex>
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 #include "../WTSTools/WTSLogger.h"
 
@@ -35,11 +42,83 @@
 #include <exception>
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
+#include <rapidjson/writer.h>
 
 namespace rj = rapidjson;
 
-uint32_t makeLocalOrderID()
+namespace
 {
+void saveTraderStatus(const std::string& path, const char* channel, bool connected,
+                      bool ready, uint32_t tradingDate, uint64_t time)
+{
+    if (path.empty()) return;
+    rj::Document row(rj::kObjectType);
+    auto& allocator = row.GetAllocator();
+    row.AddMember("channel", rj::Value(channel, allocator), allocator);
+    row.AddMember("connected", connected, allocator);
+    row.AddMember("ready", ready, allocator);
+    row.AddMember("trading_date", tradingDate, allocator);
+    row.AddMember("updated_at", time, allocator);
+#ifdef _WIN32
+    row.AddMember("pid", (uint32_t)_getpid(), allocator);
+#else
+    row.AddMember("pid", (uint32_t)getpid(), allocator);
+#endif
+    rj::StringBuffer buffer;
+    rj::Writer<rj::StringBuffer> writer(buffer);
+    row.Accept(writer);
+    static std::mutex statusMutex;
+    std::lock_guard<std::mutex> lock(statusMutex);
+    const std::string destination = path + ".status.json";
+    const std::string temporary = destination + ".tmp";
+    if (BoostFile::write_file_contents(temporary.c_str(), buffer.GetString(), buffer.GetSize()))
+    {
+        boost::system::error_code error;
+        boost::filesystem::rename(temporary, destination, error);
+        if (error) BoostFile::delete_file(temporary.c_str());
+    }
+}
+
+// Persist only native return data; no local decision can turn an event into a broker rejection.
+void saveTraderRisk(const std::string& path, const char* channel, uint32_t tradingDate,
+                    uint64_t time, const char* type, const char* code, const char* reference,
+                    int errorCode, const char* message, double quantity = 0, double price = 0)
+{
+    if (path.empty()) return;
+    rj::Document row(rj::kObjectType);
+    auto& allocator = row.GetAllocator();
+    row.AddMember("time", time, allocator);
+    row.AddMember("trading_date", tradingDate, allocator);
+    row.AddMember("channel", rj::Value(channel, allocator), allocator);
+    row.AddMember("type", rj::Value(type, allocator), allocator);
+    row.AddMember("code", rj::Value(code ? code : "", allocator), allocator);
+    row.AddMember("reference", rj::Value(reference ? reference : "", allocator), allocator);
+    row.AddMember("error_code", errorCode, allocator);
+    row.AddMember("message", rj::Value(message ? message : "", allocator), allocator);
+    if (std::isfinite(quantity)) row.AddMember("quantity", quantity, allocator);
+    else row.AddMember("quantity", rj::Value(rj::kNullType), allocator);
+    if (std::isfinite(price)) row.AddMember("price", price, allocator);
+    else row.AddMember("price", rj::Value(rj::kNullType), allocator);
+    rj::StringBuffer buffer;
+    rj::Writer<rj::StringBuffer> writer(buffer);
+    row.Accept(writer);
+    std::string line(buffer.GetString(), buffer.GetSize());
+    line.push_back('\n');
+    static std::mutex writeMutex;
+    std::lock_guard<std::mutex> lock(writeMutex);
+    BoostFile file;
+    if (file.create_or_open_file((path + ".risk.jsonl").c_str()))
+    {
+        file.seek_to_end();
+        file.write_file(line);
+    }
+}
+}
+
+uint32_t makeLocalOrderID(bool replay = false)
+{
+	static std::atomic<uint32_t> replay_ids{1};
+	if (replay) return replay_ids.fetch_add(1);
 	static std::atomic<uint32_t> _auto_order_id{ 0 };
 	if (_auto_order_id == 0)
 	{
@@ -75,8 +154,10 @@ inline const char* formatAction(WTSDirectionType dType, WTSOffsetType oType)
 TraderAdapter::TraderAdapter(EventNotifier* caster /* = NULL */)
 	: _id("")
 	, _cfg(NULL)
+	, _trading_day(0)
 	, _state(AS_NOTLOGIN)
 	, _trader_api(NULL)
+	, _remover(NULL)
 	, _orders(NULL)
 	, _stat_map(NULL)
 	, _risk_mon_enabled(false)
@@ -89,6 +170,9 @@ TraderAdapter::TraderAdapter(EventNotifier* caster /* = NULL */)
 
 TraderAdapter::~TraderAdapter()
 {
+	release();
+	if (_orders)
+		_orders->release();
 	if (_stat_map)
 		_stat_map->release();
 }
@@ -200,7 +284,18 @@ bool TraderAdapter::init(const char* id, WTSVariant* params, IBaseDataMgr* bdMgr
 		return false;
 	}
 
+	if (params->getBoolean("replay"))
+	{
+		_replay_clock = (uint64_t (*)(uint32_t))DLLHelper::get_symbol(hInst, "plus_mocker_clock");
+		if (!_replay_clock) return false; // Never silently use a live adapter in a historical job.
+		_replay_clock_id = params->getUInt32("mockerid");
+	}
 	return true;
+}
+
+uint64_t TraderAdapter::replayTime() const
+{
+	return _replay_clock ? _replay_clock(_replay_clock_id) : TimeUtils::getLocalTimeNow();
 }
 
 bool TraderAdapter::initExt(const char* id, ITraderApi* api, IBaseDataMgr* bdMgr, ActionPolicyMgr* policyMgr)
@@ -272,6 +367,7 @@ void TraderAdapter::initSaveData()
 	}
 
 	_rt_data_file = folder + "rtdata.json";
+	saveTraderStatus(_rt_data_file, _id.c_str(), false, false, 0, replayTime());
 }
 
 void TraderAdapter::logTrade(uint32_t localid, const char* stdCode, WTSTradeInfo* trdInfo)
@@ -362,6 +458,10 @@ void TraderAdapter::saveData(WTSArray* ayFunds /* = NULL */)
 				fItem.AddMember("margin", fundInfo->getMargin(), allocator);
 				fItem.AddMember("fee", fundInfo->getCommission(), allocator);
 				fItem.AddMember("available", fundInfo->getAvailable(), allocator);
+                fItem.AddMember("frozen_margin", fundInfo->getFrozenMargin(), allocator);
+                fItem.AddMember("frozen_commission", fundInfo->getFrozenCommission(), allocator);
+                fItem.AddMember("updated_at", replayTime(), allocator);
+                fItem.AddMember("trading_date", _trading_day, allocator);
 
 				fItem.AddMember("deposit", fundInfo->getDeposit(), allocator);
 				fItem.AddMember("withdraw", fundInfo->getWithdraw(), allocator);
@@ -415,11 +515,18 @@ bool TraderAdapter::run()
 
 void TraderAdapter::release()
 {
-	if (_trader_api)
-	{
-		_trader_api->registerSpi(NULL);
-		_trader_api->release();
-	}
+	_state = AS_NOTLOGIN;
+	if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), false, false, _trading_day, replayTime());
+	if (!_trader_api)
+		return;
+	// Leave the sink alive until all final trade callbacks have completed.
+	_trader_api->release();
+	_trader_api->registerSpi(NULL);
+	if (_remover)
+		_remover(_trader_api);
+	else
+		delete _trader_api;
+	_trader_api = NULL;
 }
 
 double TraderAdapter::getPosition(const char* stdCode, bool bValidOnly, int32_t flag /* = 3 */)
@@ -491,7 +598,7 @@ uint32_t TraderAdapter::doEntrust(WTSEntrust* entrust)
 	entrust->setCode(cInfo->getCode());
 	entrust->setExchange(cInfo->getExchg());
 
-	uint32_t localid = makeLocalOrderID();
+	uint32_t localid = makeLocalOrderID(_replay_clock != nullptr);
 	char* usertag = entrust->getUserTag();
 	wt_strcpy(usertag, _order_pattern.c_str(), _order_pattern.size());
 	usertag[_order_pattern.size()] =  '.';
@@ -505,7 +612,7 @@ uint32_t TraderAdapter::doEntrust(WTSEntrust* entrust)
 	}
 	else
 	{
-		int64_t now = TimeUtils::getLocalTimeNow();
+		int64_t now = replayTime();
 		_order_time_cache[entrust->getCode()].emplace_back(now);
 	}
 	return localid;
@@ -1275,7 +1382,7 @@ bool TraderAdapter::cancel(uint32_t localid)
 	
 	bool bRet = doCancel(ordInfo);
 
-	_cancel_time_cache[ordInfo->getCode()].emplace_back(TimeUtils::getLocalTimeNow());
+	_cancel_time_cache[ordInfo->getCode()].emplace_back(replayTime());
 
 	ordInfo->release();
 
@@ -1398,6 +1505,8 @@ void TraderAdapter::handleEvent(WTSTraderEvent e, int32_t ec)
 {
 	if(e == WTE_Connect)
 	{
+		_state = AS_LOGINING;
+		if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), ec == 0, false, _trading_day, replayTime());
 		if(ec == 0)
 		{
 			_trader_api->login(_cfg->getCString("user"), _cfg->getCString("pass"), WT_PRODUCT);
@@ -1409,6 +1518,8 @@ void TraderAdapter::handleEvent(WTSTraderEvent e, int32_t ec)
 	}
 	else if(e == WTE_Close)
 	{
+		_state = AS_NOTLOGIN;
+		if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), false, false, _trading_day, replayTime());
 		WTSLogger::log_dyn("trader", _id.c_str(), LL_ERROR,"[{}] Trading channel disconnected: {}", _id.c_str(), ec);
 		for (auto sink : _sinks)
 			sink->on_channel_lost();
@@ -1420,6 +1531,7 @@ void TraderAdapter::onLoginResult(bool bSucc, const char* msg, uint32_t tradingd
 	if(!bSucc)
 	{
 		_state = AS_LOGINFAILED;
+		if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), true, false, _trading_day, replayTime());
 		WTSLogger::log_dyn("trader", _id.c_str(), LL_ERROR,"[{}] Trader login failed: {}", _id.c_str(), msg);
 
 		if (_notifier)
@@ -1430,19 +1542,27 @@ void TraderAdapter::onLoginResult(bool bSucc, const char* msg, uint32_t tradingd
 		_state = AS_LOGINED;
 		WTSLogger::log_dyn("trader", _id.c_str(), LL_INFO,"[{}] Trader login succeed, trading date: {}", _id.c_str(), tradingdate);
 		_trading_day = tradingdate;
+		if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), true, false, _trading_day, replayTime());
 		_trader_api->queryPositions();	//查持仓
 	}
 }
 
 void TraderAdapter::onLogout()
 {
-	
+	_state = AS_NOTLOGIN;
+	if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), false, false, _trading_day, replayTime());
 }
 
 void TraderAdapter::onRspEntrust(WTSEntrust* entrust, WTSError *err)
 {
 	if (err && err->getErrorCode() != WEC_NONE)
 	{
+
+        if (_save_data)
+            saveTraderRisk(_rt_data_file, _id.c_str(), _trading_day, replayTime(),
+                           "order_reject", entrust->getCode(), entrust->getEntrustID(),
+                           (int)err->getErrorCode(), err->getMessage(),
+                           entrust->getVolume(), entrust->getPrice());
 		WTSLogger::log_dyn("trader", _id.c_str(), LL_ERROR, err->getMessage());
 		WTSContractInfo* cInfo = entrust->getContractInfo();
 		WTSCommodityInfo* commInfo = cInfo->getCommInfo();
@@ -1532,6 +1652,7 @@ void TraderAdapter::onRspAccount(WTSArray* ayAccounts)
 		for (auto& sink : _sinks)
 			sink->on_channel_ready();
 	}
+	if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), _state != AS_NOTLOGIN, _state == AS_ALLREADY, _trading_day, replayTime());
 }
 
 void TraderAdapter::onRspPosition(const WTSArray* ayPositions)
@@ -1862,6 +1983,12 @@ void TraderAdapter::onPushOrder(WTSOrderInfo* orderInfo)
 {
 	if (orderInfo == NULL)
 		return;
+
+    if (orderInfo->isError() && _save_data)
+        saveTraderRisk(_rt_data_file, _id.c_str(), _trading_day, replayTime(),
+                       "order_error", orderInfo->getCode(), orderInfo->getEntrustID(),
+                       (int)WEC_ORDERINSERT, orderInfo->getStateMsg(),
+                       orderInfo->getVolume(), orderInfo->getPrice());
 
 
 	WTSContractInfo* cInfo = orderInfo->getContractInfo();
@@ -2253,6 +2380,10 @@ void TraderAdapter::onPushTrade(WTSTradeInfo* tradeRecord)
 
 void TraderAdapter::onTraderError(WTSError* err, void* pData /* = NULL */)
 {
+
+    if (err && _save_data)
+        saveTraderRisk(_rt_data_file, _id.c_str(), _trading_day, replayTime(),
+                       "trader_error", "", "", (int)err->getErrorCode(), err->getMessage());
 	if(err)
 		WTSLogger::log_dyn("trader", _id.c_str(), LL_ERROR,"[{}] Error of trading channel occured: {}", _id.c_str(), err->getMessage());
 

@@ -132,7 +132,7 @@ private:
 		}
 
 		~_CalcFlag() {
-			if (_flag)
+			if (_flag && !_result)
 				_flag->exchange(false, std::memory_order_acq_rel);
 		}
 		operator bool() const { return _result; }

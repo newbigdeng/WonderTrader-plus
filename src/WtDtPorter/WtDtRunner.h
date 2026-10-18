@@ -21,6 +21,7 @@
 #include "../WTSTools/WTSHotMgr.h"
 #include "../WTSTools/WTSBaseDataMgr.h"
 
+#include <atomic>
 #include <boost/asio.hpp>
 
 NS_WTP_BEGIN
@@ -36,6 +37,7 @@ public:
 public:
 	void	initialize(const char* cfgFile, const char* logCfg, const char* modDir = "", bool bCfgFile = true, bool bLogCfgFile = true);
 	void	start(bool bAsync = false, bool bAlldayMode = false);
+	void release();
 
 	bool	createExtParser(const char* id);
 
@@ -81,7 +83,7 @@ private:
 
 	WTSBaseDataMgr	_bd_mgr;
 	WTSHotMgr		_hot_mgr;
-	boost::asio::io_service _async_io;
+	boost::asio::io_context _async_io;
 	StateMonitor	_state_mon;
 	UDPCaster		_udp_caster;
 	ShmCaster		_shm_caster;
@@ -103,6 +105,7 @@ private:
 	typedef std::map<std::string, ExpDumperPtr>  ExpDumpers;
 	ExpDumpers		_dumpers;
 
-	bool _to_exit;
+	std::atomic<bool> _to_exit;
+	std::atomic<bool> _released{false};
 };
 

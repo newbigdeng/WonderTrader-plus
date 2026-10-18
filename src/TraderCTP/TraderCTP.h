@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * \file TraderCTP.h
  * \project	WonderTrader
  *
@@ -8,6 +8,7 @@
  * \brief 
  */
 #pragma once
+#include <atomic>
 
 #include <string>
 #include <queue>
@@ -17,7 +18,7 @@
 #include "../Includes/ITraderApi.h"
 #include "../Includes/WTSCollection.hpp"
 
-#include "../API/CTP6.3.15/ThostFtdcTraderApi.h"
+#include "../API/CTP6.7.13-traderapi/ThostFtdcTraderApi.h"
 
 #include "../Share/StdUtils.hpp"
 #include "../Share/DLLHelper.hpp"
@@ -212,12 +213,12 @@ protected:
 	StdUniqueMutex			m_mtxQuery;
 	uint64_t				m_lastQryTime;
 
-	bool					m_bStopped;
+	std::atomic<bool>		m_bStopped;
 	StdThreadPtr			m_thrdWorker;
 
 	std::string		m_strModule;
 	DllHandle		m_hInstCTP;
-	typedef CThostFtdcTraderApi* (*CTPCreator)(const char *);
+	typedef CThostFtdcTraderApi* (*CTPCreator)(const char *, bool);
 	CTPCreator		m_funcCreator;
 
 	//委托单标记缓存器

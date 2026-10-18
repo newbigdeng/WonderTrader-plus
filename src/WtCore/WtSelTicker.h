@@ -1,4 +1,4 @@
-﻿/*!
+/*!
 * \file WtHftTicker.h
 * \project	WonderTrader
 *
@@ -52,7 +52,7 @@ private:
 	std::atomic<uint64_t>	_next_check_time;
 	std::atomic<uint32_t>	_last_emit_pos;
 
-	bool			_stopped;
+	std::atomic<bool>	_stopped;
 	StdThreadPtr	_thrd;
 };
 

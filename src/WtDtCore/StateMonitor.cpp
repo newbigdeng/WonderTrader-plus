@@ -30,6 +30,7 @@ StateMonitor::StateMonitor()
 
 StateMonitor::~StateMonitor()
 {
+	stop();
 }
 
 bool StateMonitor::initialize(const char* filename, WTSBaseDataMgr* bdMgr, DataManager* dtMgr)
@@ -457,6 +458,7 @@ void StateMonitor::stop()
 {
 	_stopped = true;
 
-	if (_thrd)
+	if (_thrd && _thrd->joinable())
 		_thrd->join();
+	_thrd.reset();
 }
