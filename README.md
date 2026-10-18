@@ -153,14 +153,19 @@ git clone -b wt-plus https://github.com/newbigdeng/WonderTrader-plus.git
 git clone -b py-plus https://github.com/newbigdeng/wtpy-plus.git
 docker build --build-arg BUILD_JOBS=2 \
   -t wondertrader-plus:native ./WonderTrader-plus
-cd wtpy-plus
-docker compose up -d --build
+docker build -t wtpy-plus:latest ./wtpy-plus
+docker run -d --name wt-plus-workbench --init \
+  -p 127.0.0.1:8100:8100 -v wt-plus-data:/data \
+  --stop-timeout 30 wtpy-plus:latest
 ```
 
 打开 `http://127.0.0.1:8100/console/`。
 首次启动会创建独立管理员。
 读取初始密码的方法见配套仓库 README。
 数据放在 Docker 数据卷，不写进镜像。
+已有工作台占用 `8100` 时，换一个宿主机端口。
+安装 Compose 插件后，也可使用配套 `compose.yaml`。
+两种启动方式各自创建数据卷，请选择一种。
 
 在虚拟机运行时，用 SSH 转发到 Windows：
 
