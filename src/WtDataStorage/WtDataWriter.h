@@ -204,6 +204,7 @@ private:
 	bool			_save_tick_log;
 	bool			_skip_notrade_tick;
 	bool			_skip_notrade_bar;
+	bool			_replay_localtime;
 	bool			_disable_his;
 
 	bool			_disable_tick;

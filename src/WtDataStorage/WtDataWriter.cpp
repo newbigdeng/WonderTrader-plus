@@ -94,6 +94,7 @@ WtDataWriter::WtDataWriter()
 	, _disable_his(false)
 	, _skip_notrade_tick(false)
 	, _skip_notrade_bar(false)
+	, _replay_localtime(false)
 {
 }
 
@@ -135,6 +136,9 @@ bool WtDataWriter::init(WTSVariant* params, IDataWriterSink* sink)
 	_skip_notrade_tick = params->getBoolean("skip_notrade_tick");
 	// 如果一个bar内没有一个有成交的tick，则不会有这个bar，参考掘金,MC
 	_skip_notrade_bar = params->getBoolean("skip_notrade_bar");
+	_replay_localtime = params->getBoolean("replay_localtime");
+	if (_replay_localtime)
+		pipe_writer_log(_sink, LL_WARN, "Replay receiver clock enabled; exchange trading date is preserved");
 
 	//禁用历史数据
 	_disable_his = params->getBoolean("disablehis");
@@ -1519,7 +1523,8 @@ bool WtDataWriter::updateCache(WTSContractInfo* ct, WTSTickData* curTick, uint32
 		//或者缓存里的时间大于等于最新行情的时间,数据就不需要处理
 		WTSSessionInfo* sInfo = ct->getCommInfo()->getSessionInfo();
 		uint32_t tdate = sInfo->getOffsetDate(curTick->actiondate(), curTick->actiontime() / 100000);
-		if (tdate > curTick->tradingdate())
+		// Replay may use receiver time while retaining the broker's older trading date.
+		if (!_replay_localtime && tdate > curTick->tradingdate())
 		{
 			pipe_writer_log(_sink, LL_WARN, "Last tick of {}.{} with time {}.{} has an exception, abandoned", curTick->exchg(), curTick->code(), curTick->actiondate(), curTick->actiontime());
 			return false;
