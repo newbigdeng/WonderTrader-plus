@@ -498,6 +498,7 @@ private:
 	 *	如果K线没有成交量，则不模拟tick
 	 *	默认为false，主要是针对涨跌停的行情，也适用于不活跃的合约
 	 */
+	bool			_close_only_bars = false; // Publish a single price event only after the bar closes.
 	bool			_nosim_if_notrade;
 	std::map<std::string, WTSTickStruct>	_day_cache;	//每日Tick缓存,当tick回放未开放时,会用到该缓存
 	std::map<std::string, std::string>		_ticker_keys;

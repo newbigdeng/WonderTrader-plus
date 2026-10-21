@@ -222,6 +222,8 @@ bool HisDataReplayer::init(WTSVariant* cfg, EventNotifier* notifier /* = NULL */
 	_align_by_section = cfg->getBoolean("align_by_section");
 	WTSLogger::info("Resampled bars will be aligned by section: {}", _align_by_section ? "yes" : " no");
 
+	_close_only_bars = strcmp(cfg->getCString("bar_simulation"), "close_only") == 0;
+	WTSLogger::info("Bar event model: {}", _close_only_bars ? "closed-bar only" : "legacy OHLC path");
 	_nosim_if_notrade = cfg->getBoolean("dont_simtick_if_notrade");
 	WTSLogger::info("nosim_if_notrade is {}", _nosim_if_notrade);
 
@@ -1238,6 +1240,8 @@ void HisDataReplayer::run_by_tasks(bool bNeedDump /* = false */)
 
 void HisDataReplayer::simTicks(uint32_t uDate, uint32_t uTime, uint32_t endTDate /* = 0 */, int pxType /* = 0 */)
 {
+	// A completed bar cannot reveal intrabar prices before its close event.
+	if (_close_only_bars && pxType != 3) return;
 	//这里应该触发检查
 	uint64_t nowTime = (uint64_t)uDate * 10000 + uTime;
 
@@ -1281,8 +1285,9 @@ void HisDataReplayer::simTicks(uint32_t uDate, uint32_t uTime, uint32_t endTDate
 								newPx = nextBar.close;
 
 							curTS.price = newPx;
-							curTS.volume = nextBar.vol;
-							curTS.total_volume += nextBar.vol;
+							// Bar volume is only observable once, at the closing event.
+							curTS.volume = pxType == 3 ? nextBar.vol : 0.0;
+							curTS.total_volume += curTS.volume;
 
 							//更新开高低三个字段
 							if (decimal::eq(curTS.open, 0))
@@ -1340,7 +1345,7 @@ void HisDataReplayer::simTicks(uint32_t uDate, uint32_t uTime, uint32_t endTDate
 							WTSSessionInfo* sInfo = get_session_info(realCode.c_str(), true);
 							uint32_t curTime = sInfo->getCloseTime();
 							//开高低收
-							WTSTickStruct curTS;
+							WTSTickStruct curTS = {};
 							strcpy(curTS.code, realCode.c_str());
 							curTS.action_date = _cur_date;
 							curTS.action_time = curTime * 100000;
@@ -1356,7 +1361,8 @@ void HisDataReplayer::simTicks(uint32_t uDate, uint32_t uTime, uint32_t endTDate
 								newPx = nextBar.close;
 
 							curTS.price = newPx;
-							curTS.volume = nextBar.vol;
+							// Bar volume is only observable once, at the closing event.
+							curTS.volume = pxType == 3 ? nextBar.vol : 0.0;
 							update_price(barsList->_code.c_str(), curTS.price);
 							WTSTickData* curTick = WTSTickData::create(curTS);
 							_listener->handle_tick(realCode.c_str(), curTick, pxType);
@@ -1384,6 +1390,8 @@ void HisDataReplayer::simTicks(uint32_t uDate, uint32_t uTime, uint32_t endTDate
 
 void HisDataReplayer::simTickWithUnsubBars(uint64_t stime, uint64_t nowTime, uint32_t endTDate /* = 0 */, int pxType /* = 0 */)
 {
+	// A completed bar cannot reveal intrabar prices before its close event.
+	if (_close_only_bars && pxType != 3) return;
 	//uint64_t nowTime = (uint64_t)uDate * 10000 + uTime;
 	uint32_t uDate = (uint32_t)(stime / 10000);
 
@@ -1414,7 +1422,8 @@ void HisDataReplayer::simTickWithUnsubBars(uint64_t stime, uint64_t nowTime, uin
 						curTS.action_date = _cur_date;
 						curTS.action_time = _cur_time * 100000;
 
-						curTS.volume = nextBar.vol;
+						// Bar volume is only observable once, at the closing event.
+							curTS.volume = pxType == 3 ? nextBar.vol : 0.0;
 						double newPx = 0.0;
 						if (pxType == 0)
 							newPx = nextBar.open;
@@ -1475,14 +1484,15 @@ void HisDataReplayer::simTickWithUnsubBars(uint64_t stime, uint64_t nowTime, uin
 							realCode = realCode.substr(0, realCode.size() - 1);
 
 						WTSSessionInfo* sInfo = get_session_info(realCode.c_str(), true);
-						uint32_t curTime = sInfo->getOpenTime();
+						uint32_t curTime = sInfo->getCloseTime();
 						//开高低收
-						WTSTickStruct curTS;
+						WTSTickStruct curTS = {};
 						strcpy(curTS.code, realCode.c_str());
 						curTS.action_date = _cur_date;
 						curTS.action_time = curTime * 100000;
 
-						curTS.volume = nextBar.vol;
+						// Bar volume is only observable once, at the closing event.
+							curTS.volume = pxType == 3 ? nextBar.vol : 0.0;
 						double newPx = 0.0;
 						if (pxType == 0)
 							newPx = nextBar.open;

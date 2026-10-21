@@ -3,6 +3,7 @@
 #include <vector>
 #include <map>
 #include <fstream>
+#include <mutex>
 
 #include <boost/asio.hpp>
 #include <boost/array.hpp>
@@ -114,6 +115,12 @@ struct Lot { double volume = 0, frozen = 0, price = 0; uint32_t date = 0; };
 		double balance = 0, equity = 0, realized = 0, unrealized = 0;
 		double commission = 0, margin = 0, frozen_margin = 0, frozen_commission = 0, available = 0;
 	};
+	// A small native snapshot is published before callbacks and after each mark.
+	// Readers never wait on the API worker (which may be calling Python).
+	Account _account_snapshot;
+	std::mutex _account_snapshot_mutex;
+	uint32_t _account_date = 0, _account_time = 0, _account_tdate = 0;
+	bool _account_valid = false;
 	double _capital = 0, _realized = 0, _commission = 0, _margin_rate = -1;
 	uint32_t _slippage_ticks = 0;
 	std::map<std::string, FeeSpec> _fees;
@@ -157,6 +164,7 @@ public:
 	void replayAudit(const char* type, WTSOrderInfo* order = nullptr, WTSTradeInfo* trade = nullptr, const char* error = "");
 	int replayStep(const WTSTickStruct* tick);
 	bool replayBarrier();
+	bool replayAccount(double* values, uint32_t* clock);
 	void replayDateTime(uint32_t& date, uint32_t& time) const;
 	bool _replay = false;
 	std::atomic<uint32_t> _replay_date{0}, _replay_time{0};

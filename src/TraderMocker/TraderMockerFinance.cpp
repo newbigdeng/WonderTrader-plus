@@ -192,6 +192,13 @@ void TraderMocker::writeAccount(bool checkpoint)
 {
     if (_capital <= 0) return;
     const auto snapshot = account();
+    {
+        std::lock_guard<std::mutex> guard(_account_snapshot_mutex);
+        _account_snapshot = snapshot;
+        _account_date = _replay_date.load(); _account_time = _replay_time.load();
+        _account_tdate = _replay_tdate;
+        _account_valid = _account_tdate != 0;
+    }
     if (!_funds.is_open()) {
         _funds.open("replay_funds.csv", std::ios::out);
         _funds << "date,time,trading_date,balance,equity,realized,unrealized,commission,margin,frozen_margin,frozen_commission,available\n";

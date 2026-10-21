@@ -783,7 +783,7 @@ double WtEngine::get_exright_factor(const char* stdCode, WTSCommodityInfo* commI
 uint32_t WtEngine::get_adjusting_flag()
 {
 	if (_data_mgr)
-		_data_mgr->get_adjusting_flag();
+		return _data_mgr->get_adjusting_flag();
 
 	return 0;
 }

@@ -67,6 +67,15 @@ extern "C"
 		it->second->replayDateTime(date, time);
 		return TimeUtils::makeTime(date, time);
 	}
+	// values[9]: balance,equity,realized,unrealized,commission,margin,
+	// frozen_margin,frozen_commission,available. clock[3]: date,time,trading_date.
+	EXPORT_FLAG bool plus_mocker_account(uint32_t id, double* values, uint32_t* clock)
+	{
+		if (!values || !clock) return false;
+		std::lock_guard<std::mutex> guard(replayRegistryMutex);
+		auto it = replayMockers.find(id);
+		return it != replayMockers.end() && it->second->replayAccount(values, clock);
+	}
 	EXPORT_FLAG ITraderApi* createTrader()
 	{
 		TraderMocker *instance = new TraderMocker();
@@ -1185,6 +1194,19 @@ bool TraderMocker::replayBarrier()
 	auto future = promise->get_future();
 	boost::asio::post(_io_service, [promise]{ promise->set_value(); });
 	return future.wait_for(std::chrono::seconds(5)) == std::future_status::ready;
+}
+bool TraderMocker::replayAccount(double* values, uint32_t* clock)
+{
+	if (!_replay || _terminated) return false;
+	std::lock_guard<std::mutex> guard(_account_snapshot_mutex);
+	if (!_account_valid) return false;
+	const auto& account = _account_snapshot;
+	const double fields[] = {account.balance, account.equity, account.realized,
+		account.unrealized, account.commission, account.margin, account.frozen_margin,
+		account.frozen_commission, account.available};
+	std::copy(std::begin(fields), std::end(fields), values);
+	clock[0] = _account_date; clock[1] = _account_time; clock[2] = _account_tdate;
+	return true;
 }
 int TraderMocker::replayStep(const WTSTickStruct* tick)
 {
