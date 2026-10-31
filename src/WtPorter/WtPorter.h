@@ -14,6 +14,16 @@
 #ifdef __cplusplus
 extern "C"
 {
+    EXPORT_FLAG bool request_strategy_reset(const char* strategyid, const char* trader, const char* request_id, const char* contracts_json);
+    EXPORT_FLAG WtString query_strategy_reset(const char* request_id);
+    EXPORT_FLAG bool wakeup_strategy_reset(const char* request_id);
+    EXPORT_FLAG bool configure_strategy_reconcile(const char* boot_id, const char* plan_revision);
+    EXPORT_FLAG bool request_strategy_reconcile(const char* request_json);
+    EXPORT_FLAG WtString query_strategy_reconcile(const char* request_id);
+    EXPORT_FLAG bool arm_strategy_startup_guard(const char* nonce);
+    EXPORT_FLAG bool release_strategy_startup_guard(const char* nonce);
+    EXPORT_FLAG WtString query_strategy_startup_guard();
+
 #endif
 	EXPORT_FLAG	void		register_evt_callback(FuncEventCallback cbEvt);
 
@@ -286,6 +296,7 @@ extern "C"
 
 #pragma region "扩展Parser接口"
 	EXPORT_FLAG	void		parser_push_quote(const char* id, WTSTickStruct* curTick, WtUInt32 uProcFlag);
+    EXPORT_FLAG const char* query_portfolio_state(const char* traderid, const char* strategyid);
 #pragma endregion "扩展Parser接口"
 
 #ifdef __cplusplus

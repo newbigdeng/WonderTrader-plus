@@ -16,6 +16,7 @@
 #include "../Includes/WTSVariant.hpp"
 #include "../Includes/IHotMgr.h"
 #include "../Share/decimal.h"
+#include "../Share/TimeUtils.hpp"
 
 #include "../WTSTools/WTSLogger.h"
 
@@ -45,7 +46,21 @@ void WtLocalExecuter::setTrader(TraderAdapter* adapter)
 	_trader = adapter;
 	//设置的时候读取一下trader的状态
 	if(_trader)
+	{
 		_channel_ready = _trader->isReady();
+		IDataManager* manager = _data_mgr;
+		_trader->setExecutionQuoteReader([manager](const char* code) {
+			ExecutionQuote result;
+			WTSTickData* tick = manager ? manager->grab_last_tick(code) : nullptr;
+			if (tick)
+			{
+				result = {tick->bidprice(0), tick->askprice(0), tick->price(),
+					(uint64_t)TimeUtils::makeTime(tick->actiondate(), tick->actiontime())};
+				tick->release();
+			}
+			return result;
+		});
+	}
 }
 
 bool WtLocalExecuter::init(WTSVariant* params)
@@ -217,6 +232,8 @@ OrderMap* WtLocalExecuter::getOrders(const char* stdCode)
 
 OrderIDs WtLocalExecuter::buy(const char* stdCode, double price, double qty, bool bForceClose/* = false*/)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	if (_reset_frozen) return OrderIDs();
 	if (!_channel_ready)
 		return OrderIDs();
 
@@ -225,6 +242,8 @@ OrderIDs WtLocalExecuter::buy(const char* stdCode, double price, double qty, boo
 
 OrderIDs WtLocalExecuter::sell(const char* stdCode, double price, double qty, bool bForceClose/* = false*/)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	if (_reset_frozen) return OrderIDs();
 	if (!_channel_ready)
 		return OrderIDs();
 
@@ -233,6 +252,7 @@ OrderIDs WtLocalExecuter::sell(const char* stdCode, double price, double qty, bo
 
 bool WtLocalExecuter::cancel(uint32_t localid)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
 	if (!_channel_ready)
 		return false;
 
@@ -241,6 +261,7 @@ bool WtLocalExecuter::cancel(uint32_t localid)
 
 OrderIDs WtLocalExecuter::cancel(const char* stdCode, bool isBuy, double qty)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
 	if (!_channel_ready)
 		return OrderIDs();
 
@@ -279,6 +300,9 @@ uint64_t WtLocalExecuter::getCurTime()
 #pragma region 外部接口
 void WtLocalExecuter::on_position_changed(const char* stdCode, double diffPos)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	++_portfolio_revision;
+	if (_reset_frozen) return;
 	ExecuteUnitPtr unit = getUnit(stdCode);
 	if (unit == NULL)
 		return;
@@ -305,6 +329,9 @@ void WtLocalExecuter::on_position_changed(const char* stdCode, double diffPos)
 
 void WtLocalExecuter::set_position(const wt_hashmap<std::string, double>& targets)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	++_portfolio_revision;
+	if (_reset_frozen) return;
 	/*
 	 *	先要把目标头寸进行组合匹配
 	 */
@@ -370,7 +397,7 @@ void WtLocalExecuter::set_position(const wt_hashmap<std::string, double>& target
 		if (_pool)
 		{
 			std::string code = stdCode;
-			_pool->schedule([unit, code, traderTarget](){
+			portfolio_schedule([unit, code, traderTarget](){
 				unit->self()->set_position(code.c_str(), traderTarget);
 			});
 		}
@@ -398,7 +425,7 @@ void WtLocalExecuter::set_position(const wt_hashmap<std::string, double>& target
 		//unit->self()->set_position(code, 0);
 		if (_pool)
 		{
-			_pool->schedule([unit, code](){
+			portfolio_schedule([unit, code](){
 				unit->self()->set_position(code, 0);
 			});
 		}
@@ -429,7 +456,7 @@ void WtLocalExecuter::set_position(const wt_hashmap<std::string, double>& target
 			if (_pool)
 			{
 				std::string code = stdCode.c_str();
-				_pool->schedule([unit, code]() {
+				portfolio_schedule([unit, code]() {
 					unit->self()->set_position(code.c_str(), 0);
 				});
 			}
@@ -443,6 +470,8 @@ void WtLocalExecuter::set_position(const wt_hashmap<std::string, double>& target
 
 void WtLocalExecuter::on_tick(const char* stdCode, WTSTickData* newTick)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	if (_reset_frozen) return;
 	ExecuteUnitPtr unit = getUnit(stdCode, false);
 	if (unit == NULL)
 		return;
@@ -451,7 +480,7 @@ void WtLocalExecuter::on_tick(const char* stdCode, WTSTickData* newTick)
 	if (_pool)
 	{
 		newTick->retain();
-		_pool->schedule([unit, newTick](){
+		portfolio_schedule([unit, newTick](){
 			unit->self()->on_tick(newTick);
 			newTick->release();
 		});
@@ -464,6 +493,8 @@ void WtLocalExecuter::on_tick(const char* stdCode, WTSTickData* newTick)
 
 void WtLocalExecuter::on_trade(uint32_t localid, const char* stdCode, bool isBuy, double vol, double price)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	if (_reset_frozen) return;
 	ExecuteUnitPtr unit = getUnit(stdCode, false);
 	if (unit == NULL)
 		return;
@@ -472,7 +503,7 @@ void WtLocalExecuter::on_trade(uint32_t localid, const char* stdCode, bool isBuy
 	if (_pool)
 	{
 		std::string code = stdCode;
-		_pool->schedule([localid, unit, code, isBuy, vol, price](){
+		portfolio_schedule([localid, unit, code, isBuy, vol, price](){
 			unit->self()->on_trade(localid, code.c_str(), isBuy, vol, price);
 		});
 	}
@@ -484,6 +515,8 @@ void WtLocalExecuter::on_trade(uint32_t localid, const char* stdCode, bool isBuy
 
 void WtLocalExecuter::on_order(uint32_t localid, const char* stdCode, bool isBuy, double totalQty, double leftQty, double price, bool isCanceled /* = false */)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	if (_reset_frozen) return;
 	ExecuteUnitPtr unit = getUnit(stdCode, false);
 	if (unit == NULL)
 		return;
@@ -492,7 +525,7 @@ void WtLocalExecuter::on_order(uint32_t localid, const char* stdCode, bool isBuy
 	if (_pool)
 	{
 		std::string code = stdCode;
-		_pool->schedule([localid, unit, code, isBuy, leftQty, price, isCanceled](){
+		portfolio_schedule([localid, unit, code, isBuy, leftQty, price, isCanceled](){
 			unit->self()->on_order(localid, code.c_str(), isBuy, leftQty, price, isCanceled);
 		});
 	}
@@ -504,6 +537,8 @@ void WtLocalExecuter::on_order(uint32_t localid, const char* stdCode, bool isBuy
 
 void WtLocalExecuter::on_entrust(uint32_t localid, const char* stdCode, bool bSuccess, const char* message)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	if (_reset_frozen) return;
 	ExecuteUnitPtr unit = getUnit(stdCode, false);
 	if (unit == NULL)
 		return;
@@ -513,7 +548,7 @@ void WtLocalExecuter::on_entrust(uint32_t localid, const char* stdCode, bool bSu
 	{
 		std::string code = stdCode;
 		std::string msg = message;
-		_pool->schedule([unit, localid, code, bSuccess, msg](){
+		portfolio_schedule([unit, localid, code, bSuccess, msg](){
 			unit->self()->on_entrust(localid, code.c_str(), bSuccess, msg.c_str());
 		});
 	}
@@ -525,7 +560,9 @@ void WtLocalExecuter::on_entrust(uint32_t localid, const char* stdCode, bool bSu
 
 void WtLocalExecuter::on_channel_ready()
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
 	_channel_ready = true;
+	if (_reset_frozen) return;
 	SpinLock lock(_mtx_units);
 	for (auto it = _unit_map.begin(); it != _unit_map.end(); it++)
 	{
@@ -535,7 +572,7 @@ void WtLocalExecuter::on_channel_ready()
 			//unitPtr->self()->on_channel_ready();
 			if (_pool)
 			{
-				_pool->schedule([unitPtr](){
+				portfolio_schedule([unitPtr](){
 					unitPtr->self()->on_channel_ready();
 				});
 			}
@@ -549,7 +586,9 @@ void WtLocalExecuter::on_channel_ready()
 
 void WtLocalExecuter::on_channel_lost()
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
 	_channel_ready = false;
+	if (_reset_frozen) return;
 	SpinLock lock(_mtx_units);
 	for (auto it = _unit_map.begin(); it != _unit_map.end(); it++)
 	{
@@ -558,7 +597,7 @@ void WtLocalExecuter::on_channel_lost()
 		{
 			if (_pool)
 			{
-				_pool->schedule([unitPtr](){
+				portfolio_schedule([unitPtr](){
 					unitPtr->self()->on_channel_lost();
 				});
 			}
@@ -573,6 +612,8 @@ void WtLocalExecuter::on_channel_lost()
 void WtLocalExecuter::on_account(const char* currency, double prebalance, double balance, double dynbalance, 
 	double avaliable, double closeprofit, double dynprofit, double margin, double fee, double deposit, double withdraw)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	if (_reset_frozen) return;
 	SpinLock lock(_mtx_units);
 	for (auto it = _unit_map.begin(); it != _unit_map.end(); it++)
 	{
@@ -582,7 +623,7 @@ void WtLocalExecuter::on_account(const char* currency, double prebalance, double
 			if (_pool)
 			{
 				std::string strCur = currency;
-				_pool->schedule([unitPtr, strCur, prebalance, balance, dynbalance, avaliable, closeprofit, dynprofit, margin, fee, deposit, withdraw]() {
+				portfolio_schedule([unitPtr, strCur, prebalance, balance, dynbalance, avaliable, closeprofit, dynprofit, margin, fee, deposit, withdraw]() {
 					unitPtr->self()->on_account(strCur.c_str(), prebalance, balance, dynbalance, avaliable, closeprofit, dynprofit, margin, fee, deposit, withdraw);
 				});
 			}
@@ -596,6 +637,8 @@ void WtLocalExecuter::on_account(const char* currency, double prebalance, double
 
 void WtLocalExecuter::on_position(const char* stdCode, bool isLong, double prevol, double preavail, double newvol, double newavail, uint32_t tradingday)
 {
+	std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+	if (_reset_frozen) return;
 	_channel_holds.insert(stdCode);
 
 	/*
@@ -653,7 +696,7 @@ void WtLocalExecuter::on_position(const char* stdCode, bool isLong, double prevo
 		if (_pool)
 		{
 			std::string code = stdCode;
-			_pool->schedule([unit, code](){
+			portfolio_schedule([unit, code](){
 				unit->self()->clear_all_position(code.c_str());
 			});
 		}
@@ -665,3 +708,52 @@ void WtLocalExecuter::on_position(const char* stdCode, bool isLong, double prevo
 }
 
 #pragma endregion 外部接口
+
+void WtLocalExecuter::freeze_for_reset(bool value)
+{
+    // Enqueue and freeze use one gate. A callback cannot pass the check, pause,
+    // and enqueue an old unit after wait()/clear. Never hold it while waiting.
+    {
+        std::lock_guard<std::recursive_mutex> lock(_reset_dispatch);
+        _reset_frozen = value; ++_portfolio_revision;
+        if (!value) _channel_ready = _trader && _trader->isReady();
+    }
+    if (value && _pool) _pool->wait();
+}
+void WtLocalExecuter::clear_reset_targets()
+{
+    if (_pool) _pool->wait();
+    std::lock_guard<std::recursive_mutex> resetDispatch(_reset_dispatch);
+    SpinLock lock(_mtx_units);
+    _unit_map.clear(); _target_pos.clear(); _channel_holds.clear(); ++_portfolio_revision;
+}
+
+bool WtLocalExecuter::reconcile_idle()
+{
+    std::lock_guard<std::recursive_mutex> dispatch(_reset_dispatch);
+    SpinLock lock(_mtx_units);
+    for (const auto& target : _target_pos) if (target.second != 0) return false;
+    return true; // freeze_for_reset(true) already drained the unit pool.
+}
+
+void WtLocalExecuter::portfolio_schedule(std::function<void()> task)
+{
+    ++_portfolio_tasks; ++_portfolio_revision;
+    _pool->schedule([this, task]() {
+        struct Complete {
+            WtLocalExecuter* self;
+            ~Complete() { --self->_portfolio_tasks; ++self->_portfolio_revision; }
+        } complete{this};
+        task();
+    });
+}
+
+bool WtLocalExecuter::portfolio_targets(std::map<std::string, double>& targets,
+    uint64_t& revision, uint64_t& pending)
+{
+    std::unique_lock<std::recursive_mutex> lock(_reset_dispatch, std::try_to_lock);
+    if (!lock || !_channel_ready) return false;
+    for (const auto& target : _target_pos) targets[target.first] = round(target.second * _scale);
+    revision = _portfolio_revision.load(); pending = _portfolio_tasks.load();
+    return true;
+}

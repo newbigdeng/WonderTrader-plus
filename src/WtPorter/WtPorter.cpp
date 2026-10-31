@@ -124,6 +124,13 @@ bool plus_replay_flush(WtUInt32 date, WtUInt32 time)
 	return getRunner().replayFlush(date, time);
 }
 
+const char* query_portfolio_state(const char* traderid, const char* strategyid)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine ? engine->query_portfolio_state(traderid, strategyid) :
+        "{\"schema\":1,\"producer\":\"wt-native-portfolio/v1\",\"valid\":false,\"ready\":false,\"reason\":\"cta_engine_unavailable\"}";
+}
+
 bool query_trade_account(const char* trader)
 {
     return getRunner().requestAccount(trader);
@@ -1201,3 +1208,50 @@ void parser_push_quote(const char* id, WTSTickStruct* curTick, WtUInt32 uProcFla
 	getRunner().on_ext_parser_quote(id, curTick, uProcFlag);
 }
 #pragma endregion "扩展Parser接口"
+bool request_strategy_reset(const char* strategyid, const char* trader, const char* request_id, const char* contracts_json)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine && engine->request_strategy_reset(strategyid, trader, request_id, contracts_json);
+}
+const char* query_strategy_reset(const char* request_id)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine ? engine->query_strategy_reset(request_id) : "{\"status\":\"failed\",\"step\":\"failed\",\"error\":\"CTA engine is not running\"}";
+}
+
+bool wakeup_strategy_reset(const char* request_id)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine && engine->wakeup_strategy_reset(request_id);
+}
+
+bool configure_strategy_reconcile(const char* boot_id, const char* plan_revision)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine && engine->configure_strategy_reconcile(boot_id, plan_revision);
+}
+bool request_strategy_reconcile(const char* request_json)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine && engine->request_strategy_reconcile(request_json);
+}
+const char* query_strategy_reconcile(const char* request_id)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine ? engine->query_strategy_reset(request_id) : "{\"status\":\"failed\",\"query_complete\":false}";
+}
+bool arm_strategy_startup_guard(const char* nonce)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine && engine->arm_strategy_startup_guard(nonce);
+}
+bool release_strategy_startup_guard(const char* nonce)
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine && engine->release_strategy_startup_guard(nonce);
+}
+const char* query_strategy_startup_guard()
+{
+    auto* engine = dynamic_cast<WtCtaEngine*>(getRunner().getEngine());
+    return engine ? engine->query_strategy_startup_guard() : "{\"capable\":false,\"active\":false}";
+}

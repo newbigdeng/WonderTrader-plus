@@ -8,6 +8,9 @@
  * \brief 
  */
 #pragma once
+#include <mutex>
+#include <vector>
+#include <atomic>
 #include "../Includes/ICtaStraCtx.h"
 #include "../Share/threadpool.hpp"
 #include "WtExecMgr.h"
@@ -22,6 +25,18 @@ class WtCtaRtTicker;
 class WtCtaEngine : public WtEngine, public IExecuterStub
 {
 public:
+    bool request_strategy_reset(const char* strategy, const char* trader, const char* request, const char* contracts, bool query_only = false, const char* metadata = nullptr);
+    bool configure_strategy_reconcile(const char* boot, const char* revision);
+    bool request_strategy_reconcile(const char* request_json);
+    bool arm_strategy_startup_guard(const char* nonce);
+    bool release_strategy_startup_guard(const char* nonce);
+    const char* query_strategy_startup_guard();
+    const char* query_strategy_reset(const char* request);
+    bool wakeup_strategy_reset(const char* request);
+    void process_strategy_resets();
+    bool strategy_reset_pending() const { return _reset_pending; }
+    const char* query_portfolio_state(const char* traderid, const char* strategyid);
+
 	WtCtaEngine();
 	virtual ~WtCtaEngine();
 
@@ -81,6 +96,25 @@ public:
 	void notify_trade(const char* straId, const char* stdCode, bool isLong, bool isOpen, uint64_t curTime, double price, const char* userTag);
 
 private:
+    friend struct NativePortfolioTestAccessor;
+    struct ResetJob {
+        std::string strategy, trader, request, status = "running", step = "queued", message, error, archive;
+        std::vector<std::string> contracts;
+        uint64_t started = 0, completed = 0;
+        CtaContextPtr context;
+        std::shared_ptr<WtLocalExecuter> executor;
+        bool begun = false, init_requested = false, init_dispatched = false;
+        bool query_only = false, adapter_begun = false, previous_context_frozen = false, previous_executor_frozen = false;
+        std::string metadata, snapshot;
+    };
+    std::recursive_mutex _reset_events;
+    std::mutex _reset_jobs_mutex;
+    std::vector<std::shared_ptr<ResetJob>> _reset_jobs;
+    std::atomic<bool> _reset_pending{false};
+    std::string _reconcile_boot, _reconcile_revision;
+    std::string _startup_nonce;
+    bool _startup_guard = false;
+
 	typedef wt_hashmap<uint32_t, CtaContextPtr> ContextMap;
 	ContextMap		_ctx_map;
 

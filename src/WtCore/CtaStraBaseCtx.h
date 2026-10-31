@@ -8,6 +8,7 @@
  * \brief 
  */
 #pragma once
+#include <atomic>
 #include "../Includes/ICtaStraCtx.h"
 #include "../Includes/FasterDefs.h"
 #include "../Includes/WTSDataDef.hpp"
@@ -58,6 +59,19 @@ typedef wt_hashmap<std::string, CondList>	CondEntrustMap;
 class CtaStraBaseCtx : public ICtaStraCtx
 {
 public:
+	void freeze_for_reset(bool value) { _reset_blocked = value; }
+	bool reset_frozen() const { return _reset_blocked; }
+	bool reconcile_idle() const {
+        for (const auto& signal : _sig_map) if (signal.second._volume != 0) return false;
+        for (const auto& item : _condtions) if (!item.second.empty()) return false;
+        for (const auto& item : _pos_map) {
+            if (item.second._volume != 0 || item.second._frozen != 0) return false;
+            for (const auto& detail : item.second._details) if (detail._volume != 0) return false;
+        }
+        return true;
+    }
+	void pump_reset_callback(uint32_t date, uint32_t time) { if (!_reset_blocked) on_calculate(date, time); }
+	bool archive_and_reset(const std::string& directory, std::string& error);
 	CtaStraBaseCtx(WtCtaEngine* engine, const char* name, int32_t slippage);
 	virtual ~CtaStraBaseCtx();
 	// Flush after strategy callbacks stop; this is not a session-end event.
@@ -369,6 +383,7 @@ protected:
 	wt_hashmap<std::string, ChartIndex>	_chart_indice;
 
 private:
+	std::atomic<bool> _reset_blocked{false};
 	SpinMutex		_mutex;
 };
 

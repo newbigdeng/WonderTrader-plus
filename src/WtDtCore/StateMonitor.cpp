@@ -406,7 +406,9 @@ void StateMonitor::run()
 						{
 							uint32_t offTime = sInfo->offsetTime(curMin, true);
 							uint32_t offInitTime = sInfo->offsetTime(stateInfo->_init_time, true);
-							if (offTime >= 0 && offTime < offInitTime)
+							// A night session's reset window falls on Sunday evening.
+							// Recover holiday state on the next trading date even after that window.
+							if (stateInfo->_state == SS_Holiday || offTime < offInitTime)
 							{
 								bool isAllHoliday = true;
 								CodeSet* pCommSet =  _bd_mgr->getSessionComms(stateInfo->_session);
@@ -415,6 +417,11 @@ void StateMonitor::run()
 									for (auto it = pCommSet->begin(); it != pCommSet->end(); it++)
 									{
 										const char* pid = (*it).c_str();
+										if (stateInfo->_state == SS_Holiday)
+										{
+											if (_bd_mgr->isTradingDate(pid, curDate)) isAllHoliday = false;
+											continue;
+										}
 										if ((sInfo->getOffsetMins() > 0 &&
 											(! _bd_mgr->isTradingDate(pid, curDate) &&
 											!(sInfo->isInTradingTime(curMin) &&  _bd_mgr->isTradingDate(pid, prevDate)))) ||

@@ -505,7 +505,12 @@ int TraderCTP::queryPositions()
 			memset(&req, 0, sizeof(req));
 			wt_strcpy(req.BrokerID, m_strBroker.c_str(), m_strBroker.size());
 			wt_strcpy(req.InvestorID, m_strUser.c_str(), m_strUser.size());
-			m_pUserAPI->ReqQryInvestorPosition(&req, genRequestID());
+			m_positionQueryError = false;
+			if (m_mapPosition) { m_mapPosition->release(); m_mapPosition = NULL; }
+			if (m_pUserAPI->ReqQryInvestorPosition(&req, genRequestID()) != 0) {
+				m_positionQueryError = true;
+				OnRspQryInvestorPosition(NULL, NULL, 0, true);
+			}
 		});
 	}
 
@@ -529,7 +534,12 @@ int TraderCTP::queryOrders()
 			wt_strcpy(req.BrokerID, m_strBroker.c_str(), m_strBroker.size());
 			wt_strcpy(req.InvestorID, m_strUser.c_str(), m_strUser.size());
 
-			m_pUserAPI->ReqQryOrder(&req, genRequestID());
+			m_orderQueryError = false;
+			if (m_ayOrders) m_ayOrders->clear();
+			if (m_pUserAPI->ReqQryOrder(&req, genRequestID()) != 0) {
+				m_orderQueryError = true;
+				OnRspQryOrder(NULL, NULL, 0, true);
+			}
 		});
 
 		//triggerQuery();
@@ -813,13 +823,8 @@ void TraderCTP::OnRspQryTradingAccount(CThostFtdcTradingAccountField *pTradingAc
 
 void TraderCTP::OnRspQryInvestorPosition(CThostFtdcInvestorPositionField *pInvestorPosition, CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast)
 {
-	if (bIsLast)
-	{
-		m_bInQuery = false;
-		//triggerQuery();
-	}
-
-	if (!IsErrorRspInfo(pRspInfo) && pInvestorPosition)
+	m_positionQueryError = m_positionQueryError || IsErrorRspInfo(pRspInfo);
+	if (!m_positionQueryError && pInvestorPosition)
 	{
 		if (NULL == m_mapPosition)
 			m_mapPosition = PositionMap::create();
@@ -853,6 +858,7 @@ void TraderCTP::OnRspQryInvestorPosition(CThostFtdcInvestorPositionField *pInves
 			pos->setMargin(pos->getMargin() + pInvestorPosition->UseMargin);
 			pos->setDynProfit(pos->getDynProfit() + pInvestorPosition->PositionProfit);
 			pos->setPositionCost(pos->getPositionCost() + pInvestorPosition->PositionCost);
+			pos->setOpenCost(pos->getOpenCost() + pInvestorPosition->OpenCost);
 
 			if (pos->getTotalPosition() != 0)
 			{
@@ -931,14 +937,15 @@ void TraderCTP::OnRspQryInvestorPosition(CThostFtdcInvestorPositionField *pInves
 				pos->setAvailPrePos(0);
 			}
 		}
+		else if (pInvestorPosition->Position != 0) m_positionQueryError = true;
 	}
 
 	if (bIsLast)
 	{
 
-		WTSArray* ayPos = WTSArray::create();
+		WTSArray* ayPos = m_positionQueryError ? NULL : WTSArray::create();
 
-		if(m_mapPosition && m_mapPosition->size() > 0)
+		if(ayPos && m_mapPosition && m_mapPosition->size() > 0)
 		{
 			for (auto it = m_mapPosition->begin(); it != m_mapPosition->end(); it++)
 			{
@@ -955,7 +962,8 @@ void TraderCTP::OnRspQryInvestorPosition(CThostFtdcInvestorPositionField *pInves
 			m_mapPosition = NULL;
 		}
 
-		ayPos->release();
+		if (ayPos) ayPos->release();
+		m_bInQuery = false;
 	}
 }
 
@@ -1010,13 +1018,8 @@ void TraderCTP::OnRspQryTrade(CThostFtdcTradeField *pTrade, CThostFtdcRspInfoFie
 
 void TraderCTP::OnRspQryOrder(CThostFtdcOrderField *pOrder, CThostFtdcRspInfoField *pRspInfo, int nRequestID, bool bIsLast)
 {
-	if (bIsLast)
-	{
-		m_bInQuery = false;
-		//triggerQuery();
-	}
-
-	if (!IsErrorRspInfo(pRspInfo) && pOrder)
+	m_orderQueryError = m_orderQueryError || IsErrorRspInfo(pRspInfo);
+	if (!m_orderQueryError && pOrder)
 	{
 		if (NULL == m_ayOrders)
 			m_ayOrders = WTSArray::create();
@@ -1025,16 +1028,21 @@ void TraderCTP::OnRspQryOrder(CThostFtdcOrderField *pOrder, CThostFtdcRspInfoFie
 		if (orderInfo)
 		{
 			m_ayOrders->append(orderInfo, false);
-		}
+		} else if (pOrder->OrderStatus != THOST_FTDC_OST_AllTraded &&
+            pOrder->OrderStatus != THOST_FTDC_OST_Canceled &&
+            pOrder->OrderStatus != THOST_FTDC_OST_PartTradedNotQueueing &&
+            pOrder->OrderStatus != THOST_FTDC_OST_NoTradeNotQueueing) m_orderQueryError = true;
 	}
 
 	if (bIsLast)
 	{
+		if (!m_orderQueryError && !m_ayOrders) m_ayOrders = WTSArray::create();
 		if (m_sink)
-			m_sink->onRspOrders(m_ayOrders);
+			m_sink->onRspOrders(m_orderQueryError ? NULL : m_ayOrders);
 
 		if (m_ayOrders)
 			m_ayOrders->clear();
+		m_bInQuery = false;
 	}
 }
 

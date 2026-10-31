@@ -56,6 +56,19 @@ void WtCtaRtTicker::trigger_price(WTSTickData* curTick)
 	}
 }
 
+void WtCtaRtTicker::close_replay_bar(uint32_t date, uint32_t time)
+{
+	if (!_replay || !_cur_pos || _last_emit_pos >= _cur_pos) return;
+	StdUniqueLock lock(_mtx);
+	_last_emit_pos = _cur_pos;
+	// Flush all bars already closed before this Tick, including sparse m5 bars.
+	bool ending = _s_info->offsetTime(time, true) == _s_info->getCloseTime(true);
+	_engine->set_date_time(date, time, 0, time);
+	if (_store) _store->onMinuteEnd(date, time, ending ? _engine->getTradingDate() : 0);
+	_engine->on_schedule(date, time);
+	if (ending) _engine->on_session_end();
+}
+
 void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 {
 	if (_thrd == NULL && !_replay)
@@ -66,6 +79,8 @@ void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 
 	uint32_t uDate = curTick->actiondate();
 	uint32_t uTime = curTick->actiontime();
+	if (!_replay && curTick->tradingdate() < _engine->getTradingDate())
+		return;
 
 	if (_date != 0 && (uDate < _date || (uDate == _date && uTime < _time)))
 	{
@@ -74,6 +89,24 @@ void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 		return;
 	}
 
+	if (_replay && _cur_pos && _replay_bar_date)
+	{
+		uint64_t due = (uint64_t)_replay_bar_date * 10000 + _s_info->minuteToTime(_cur_pos);
+		if ((uint64_t)uDate * 10000 + uTime / 100000 >= due) close_replay_bar(uDate, uTime / 100000);
+	}
+	if (!_replay && curTick->tradingdate() > _engine->getTradingDate())
+	{
+		StdUniqueLock lock(_mtx);
+		// Some contracts stop before the engine session ends. Settle the old day once.
+		if (_cur_pos && _last_emit_pos < _s_info->getTradingMins())
+			_engine->on_session_end();
+		_cur_pos = 0;
+		_last_emit_pos = 0;
+		_next_check_time = TimeUtils::getLocalTimeNow() + 60000 - uTime % 100000;
+		_engine->set_date_time(uDate, uTime / 100000, uTime % 100000);
+		_engine->set_trading_date(curTick->tradingdate());
+		_engine->on_session_begin();
+	}
 	if (_replay && curTick->tradingdate() != _engine->getTradingDate())
 	{
 		_engine->on_session_end();
@@ -116,7 +149,10 @@ void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 	{
 		//如果当前时间是0, 则直接赋值即可
 		_cur_pos = minutes;
-		if (_replay) { _engine->set_date_time(_date, wrapMin, curSec, curMin); trigger_price(curTick); }
+		if (_replay)
+			_replay_bar_date = wrapMin < curMin ? TimeUtils::getNextDate(_date) : _date;
+		_engine->set_date_time(_date, wrapMin, curSec, curMin);
+		trigger_price(curTick);
 	}
 	else if (_cur_pos < minutes)
 	{
@@ -131,18 +167,25 @@ void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 			_last_emit_pos = _cur_pos;
 
 			uint32_t thisMin = _s_info->minuteToTime(_cur_pos);
+			uint32_t closeDate = _date;
+			if (_replay)
+			{
+				// Keep the pending bar's date even when an auction Tick advances _date.
+				closeDate = _replay_bar_date;
+				_engine->set_date_time(closeDate, thisMin, 0, thisMin);
+			}
 			
 			bool bEndingTDate = false;
 			uint32_t offMin = _s_info->offsetTime(thisMin, true);
 			if (offMin == _s_info->getCloseTime(true))
 				bEndingTDate = true;
 
-			WTSLogger::info("Minute Bar {}.{:04d} Closed by data", _date, thisMin);
+			WTSLogger::info("Minute Bar {}.{:04d} Closed by data", closeDate, thisMin);
 			if (_store)
-				_store->onMinuteEnd(_date, thisMin, bEndingTDate ? _engine->getTradingDate() : 0);
+				_store->onMinuteEnd(closeDate, thisMin, bEndingTDate ? _engine->getTradingDate() : 0);
 
 			//任务调度
-			_engine->on_schedule(_date, thisMin);
+			_engine->on_schedule(closeDate, thisMin);
 
 			if(bEndingTDate)
 				_engine->on_session_end();
@@ -159,6 +202,7 @@ void WtCtaRtTicker::on_tick(WTSTickData* curTick)
 		trigger_price(curTick);
 
 		_cur_pos = minutes;
+		if (_replay) _replay_bar_date = wrapMin < curMin ? TimeUtils::getNextDate(_date) : _date;
 	}
 	else
 	{
@@ -198,6 +242,7 @@ void WtCtaRtTicker::run()
 	_thrd.reset(new StdThread([this](){
 		while(!_stopped)
 		{
+			_engine->process_strategy_resets();
 			uint32_t offTime = _s_info->offsetTime(_engine->get_min_time(), true);
 
 			if (_time != UINT_MAX && _s_info->isInTradingTime(_time / 100000, true))
@@ -209,6 +254,8 @@ void WtCtaRtTicker::run()
 				{
 					//触发数据回放模块
 					StdUniqueLock lock(_mtx);
+					if (now < _next_check_time || _last_emit_pos >= _cur_pos)
+						continue;
 
 					//优先修改时间标记
 					_last_emit_pos = _cur_pos;
@@ -257,6 +304,9 @@ void WtCtaRtTicker::run()
 
 					//触发数据回放模块
 					StdUniqueLock lock(_mtx);
+					if (_last_emit_pos == 0 || _last_emit_pos >= total_mins ||
+						_s_info->offsetTime(_engine->get_min_time(), true) < _s_info->getCloseTime(true))
+						continue;
 
 					//优先修改时间标记
 					_last_emit_pos = total_mins;
@@ -277,7 +327,7 @@ void WtCtaRtTicker::run()
 				}
 				else
 				{
-					std::this_thread::sleep_for(std::chrono::seconds(10));
+					std::this_thread::sleep_for(std::chrono::milliseconds(_engine->strategy_reset_pending() ? 100 : 1000));
 				}
 			}
 		}

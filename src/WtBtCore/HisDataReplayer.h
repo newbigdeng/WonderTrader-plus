@@ -153,6 +153,7 @@ public:
 
 class HisDataReplayer
 {
+	friend struct NativeBarVisibilityTest;
 
 private:
 	template <typename T>

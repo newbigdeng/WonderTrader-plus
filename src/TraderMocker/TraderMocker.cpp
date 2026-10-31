@@ -1086,6 +1086,8 @@ int TraderMocker::queryOrders()
 {
 	boost::asio::post(_io_service, [this](){
 		StdUniqueLock lock(_mutex_api);
+		// A successful empty query is an empty collection, never a failed response.
+		if (_orders == NULL) _orders = WTSArray::create();
 
 		if (_listener)
 			_listener->onRspOrders(_orders);
@@ -1098,6 +1100,7 @@ int TraderMocker::queryTrades()
 {
 	boost::asio::post(_io_service, [this](){
 		StdUniqueLock lock(_mutex_api);
+		if (_trades == NULL) _trades = WTSArray::create();
 
 		if (_listener)
 			_listener->onRspTrades(_trades);

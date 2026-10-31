@@ -367,7 +367,9 @@ void TraderAdapter::initSaveData()
 	}
 
 	_rt_data_file = folder + "rtdata.json";
+	_execution.open(folder + "execution-quality.jsonl", _id);
 	saveTraderStatus(_rt_data_file, _id.c_str(), false, false, 0, replayTime());
+	_reset_blocked = StdFile::exists((_rt_data_file + ".reset-block").c_str());
 }
 
 void TraderAdapter::logTrade(uint32_t localid, const char* stdCode, WTSTradeInfo* trdInfo)
@@ -427,6 +429,16 @@ void TraderAdapter::saveData(WTSArray* ayFunds /* = NULL */)
 			longItem.AddMember("newavail", pInfo.l_newavail, allocator);
 			longItem.AddMember("prevol", pInfo.l_prevol, allocator);
 			longItem.AddMember("preavail", pInfo.l_preavail, allocator);
+			auto addMetrics = [&](rj::Value& item, const PositionMetrics& metrics) {
+				item.AddMember("avg_price", metrics.avg_price, allocator);
+				item.AddMember("position_cost", metrics.position_cost, allocator);
+				item.AddMember("dynprofit", metrics.dynprofit, allocator);
+				item.AddMember("open_price", metrics.open_price, allocator);
+				item.AddMember("margin", metrics.margin, allocator);
+				item.AddMember("metrics_updated_at", metrics.updated_at, allocator);
+				item.AddMember("metrics_valid", metrics.valid, allocator);
+			};
+			addMetrics(longItem, pInfo.l_metrics);
 			pItem.AddMember("long", longItem, allocator);
 
 			rj::Value shortItem(rj::kObjectType);
@@ -434,6 +446,7 @@ void TraderAdapter::saveData(WTSArray* ayFunds /* = NULL */)
 			shortItem.AddMember("newavail", pInfo.s_newavail, allocator);
 			shortItem.AddMember("prevol", pInfo.s_prevol, allocator);
 			shortItem.AddMember("preavail", pInfo.s_preavail, allocator);
+			addMetrics(shortItem, pInfo.s_metrics);
 			pItem.AddMember("short", shortItem, allocator);
 
 			jPos.PushBack(pItem, allocator);
@@ -470,6 +483,16 @@ void TraderAdapter::saveData(WTSArray* ayFunds /* = NULL */)
 			}
 		}
 
+		// A position reply must not refresh or erase the last account receipt.
+		if (ayFunds == NULL)
+		{
+			std::string previous;
+			BoostFile::read_file_contents(_rt_data_file.c_str(), previous);
+			rj::Document saved;
+			saved.Parse(previous.c_str());
+			if (!saved.HasParseError() && saved.IsObject() && saved.HasMember("funds"))
+				jFunds.CopyFrom(saved["funds"], allocator);
+		}
 		root.AddMember("funds", jFunds, allocator);
 	}
 
@@ -515,12 +538,16 @@ bool TraderAdapter::run()
 
 void TraderAdapter::release()
 {
+    bool previouslyReady;
+    { std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+      previouslyReady = isReady(); _reconcile_releasing = true; }
 	_state = AS_NOTLOGIN;
 	if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), false, false, _trading_day, replayTime());
 	if (!_trader_api)
 		return;
 	// Leave the sink alive until all final trade callbacks have completed.
 	_trader_api->release();
+	finish_reconcile_release(previouslyReady); // All broker callback threads have joined.
 	_trader_api->registerSpi(NULL);
 	if (_remover)
 		_remover(_trader_api);
@@ -590,6 +617,10 @@ OrderMap* TraderAdapter::getOrders(const char* stdCode)
 
 uint32_t TraderAdapter::doEntrust(WTSEntrust* entrust)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+	std::lock_guard<std::recursive_mutex> resetLock(_reset_gate);
+	if (_reconcile_releasing || _startup_guard || (_reset_blocked && !_reset_sending)) return UINT_MAX;
+	const std::string executionCode = entrust->getCode();
 	_trader_api->makeEntrustID(entrust->getEntrustID(), 64);
 
 	WTSContractInfo* cInfo = entrust->getContractInfo();
@@ -604,9 +635,21 @@ uint32_t TraderAdapter::doEntrust(WTSEntrust* entrust)
 	usertag[_order_pattern.size()] =  '.';
 	fmtutil::format_to(usertag + _order_pattern.size() + 1, "{}", localid);
 	
+	const bool executionBuy = (entrust->getDirection() == WDT_LONG) == (entrust->getOffsetType() == WOT_OPEN);
+	const ExecutionQuote executionQuote = _execution.quote(executionCode.c_str());
+	const ExecutionStamp executionTime = ExecutionStamp::now();
+	++_reset_epoch;
+	_pending_submissions.insert(localid);
+	_portfolio_state.update([](PortfolioView&) {});
 	int32_t ret = _trader_api->orderInsert(entrust);
+	_execution.record("submission", _trading_day, localid, entrust->getEntrustID(), "", "",
+		executionCode.c_str(), executionBuy, entrust->getVolume(), entrust->getPrice(), executionTime, executionQuote);
 	if(ret < 0)
 	{
+		_pending_submissions.erase(localid);
+		_portfolio_state.update([](PortfolioView&) {});
+		_execution.record("reject", _trading_day, localid, entrust->getEntrustID(), "", "",
+			executionCode.c_str(), executionBuy, entrust->getVolume(), entrust->getPrice(), ExecutionStamp::now());
 		WTSLogger::log_dyn("trader", _id.c_str(), LL_ERROR, "[{}] Order placing failed: {}", _id.c_str(), ret);
 		return UINT_MAX;
 	}
@@ -1342,6 +1385,10 @@ OrderIDs TraderAdapter::sell(const char* stdCode, double price, double qty, int 
 
 bool TraderAdapter::doCancel(WTSOrderInfo* ordInfo)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+	_portfolio_state.update([](PortfolioView&) {});
+    std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+    if (_reconcile_releasing || _startup_guard || (_reset_active && _reset_query_only)) return false;
 	if (ordInfo == NULL || !ordInfo->isAlive())
 		return false;
 
@@ -1361,6 +1408,12 @@ bool TraderAdapter::doCancel(WTSOrderInfo* ordInfo)
 	WTSEntrustAction* action = WTSEntrustAction::create(ordInfo->getCode(), cInfo->getExchg());
 	action->setEntrustID(ordInfo->getEntrustID());
 	action->setOrderID(ordInfo->getOrderID());
+	uint32_t executionLocal = 0;
+	if (StrUtil::startsWith(ordInfo->getUserTag(), (_order_pattern + ".").c_str(), false))
+		executionLocal = strtoul(ordInfo->getUserTag() + _order_pattern.size() + 1, nullptr, 10);
+	_execution.record("cancel_request", _trading_day, executionLocal, ordInfo->getEntrustID(), ordInfo->getOrderID(), "",
+		stdCode.c_str(), (ordInfo->getDirection() == WDT_LONG) == (ordInfo->getOffsetType() == WOT_OPEN),
+		ordInfo->getVolLeft(), ordInfo->getPrice(), ExecutionStamp::now());
 	int ret = _trader_api->orderAction(action);
 	bool isSent = (ret >= 0);
 	action->release();
@@ -1503,8 +1556,10 @@ uint32_t TraderAdapter::closeShort(const char* stdCode, double price, double qty
 #pragma region "ITraderSpi接口"
 void TraderAdapter::handleEvent(WTSTraderEvent e, int32_t ec)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
 	if(e == WTE_Connect)
 	{
+		portfolio_status(ec == 0);
 		_state = AS_LOGINING;
 		if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), ec == 0, false, _trading_day, replayTime());
 		if(ec == 0)
@@ -1518,6 +1573,9 @@ void TraderAdapter::handleEvent(WTSTraderEvent e, int32_t ec)
 	}
 	else if(e == WTE_Close)
 	{
+		portfolio_status(false);
+        { std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+          if (!_reconcile_releasing) { ++_reset_epoch; _reconcile_connected = false; } }
 		_state = AS_NOTLOGIN;
 		if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), false, false, _trading_day, replayTime());
 		WTSLogger::log_dyn("trader", _id.c_str(), LL_ERROR,"[{}] Trading channel disconnected: {}", _id.c_str(), ec);
@@ -1528,6 +1586,9 @@ void TraderAdapter::handleEvent(WTSTraderEvent e, int32_t ec)
 
 void TraderAdapter::onLoginResult(bool bSucc, const char* msg, uint32_t tradingdate)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+	portfolio_status(true, tradingdate);
+	_metrics_query_pending = false;
 	if(!bSucc)
 	{
 		_state = AS_LOGINFAILED;
@@ -1549,14 +1610,31 @@ void TraderAdapter::onLoginResult(bool bSucc, const char* msg, uint32_t tradingd
 
 void TraderAdapter::onLogout()
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+	portfolio_status(false);
+    { std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+      if (!_reconcile_releasing) { ++_reset_epoch; _reconcile_connected = false; } }
 	_state = AS_NOTLOGIN;
 	if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), false, false, _trading_day, replayTime());
 }
 
 void TraderAdapter::onRspEntrust(WTSEntrust* entrust, WTSError *err)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+	_portfolio_state.update([](PortfolioView&) {});
+	reset_trade_event();
+    if (entrust && err && err->getErrorCode() != WEC_NONE) {
+        std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+        if (StrUtil::startsWith(entrust->getUserTag(), (_order_pattern + ".").c_str(), false))
+            _pending_submissions.erase(strtoul(entrust->getUserTag() + _order_pattern.size() + 1, nullptr, 10));
+    }
+	const ExecutionStamp executionTime = ExecutionStamp::now();
+	reset_entrust_error(err);
 	if (err && err->getErrorCode() != WEC_NONE)
 	{
+		uint32_t executionLocal = 0;
+		if (StrUtil::startsWith(entrust->getUserTag(), (_order_pattern + ".").c_str(), false))
+			executionLocal = strtoul(entrust->getUserTag() + _order_pattern.size() + 1, nullptr, 10);
 
         if (_save_data)
             saveTraderRisk(_rt_data_file, _id.c_str(), _trading_day, replayTime(),
@@ -1574,6 +1652,9 @@ void TraderAdapter::onRspEntrust(WTSEntrust* entrust, WTSError *err)
 		else
 			stdCode = CodeHelper::rawFlatCodeToStdCode(cInfo->getCode(), cInfo->getExchg(), cInfo->getProduct());
 
+		_execution.record("reject", _trading_day, executionLocal, entrust->getEntrustID(), "", "",
+			stdCode.c_str(), (entrust->getDirection() == WDT_LONG) == (entrust->getOffsetType() == WOT_OPEN),
+			entrust->getVolume(), entrust->getPrice(), executionTime);
 		bool isLong = (entrust->getDirection() == WDT_LONG);
 		bool isToday = (entrust->getOffsetType() == WOT_CLOSETODAY);
 		bool isOpen = (entrust->getOffsetType() == WOT_OPEN);
@@ -1625,6 +1706,7 @@ void TraderAdapter::onRspEntrust(WTSEntrust* entrust, WTSError *err)
 
 void TraderAdapter::onRspAccount(WTSArray* ayAccounts)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
 	if (_save_data)
 	{
 		saveData(ayAccounts);
@@ -1652,11 +1734,53 @@ void TraderAdapter::onRspAccount(WTSArray* ayAccounts)
 		for (auto& sink : _sinks)
 			sink->on_channel_ready();
 	}
+	else if (_state == AS_ALLREADY && ayAccounts && ayAccounts->size())
+	{
+		std::lock_guard<std::recursive_mutex> resetLock(_reset_gate);
+		if (!_reset_blocked && !_metrics_query_pending) {
+			// Drain pre-reset metrics requests before admitting the reset query chain.
+			_metrics_query_revision = _position_revision;
+			_metrics_query_pending = true;
+			if (_trader_api->queryPositions() != 0) _metrics_query_pending = false;
+		}
+	}
 	if (_save_data) saveTraderStatus(_rt_data_file, _id.c_str(), _state != AS_NOTLOGIN, _state == AS_ALLREADY, _trading_day, replayTime());
 }
 
 void TraderAdapter::onRspPosition(const WTSArray* ayPositions)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+    { std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+      if (_reset_wait_positions) { portfolio_positions(ayPositions); reset_position_response(ayPositions); return; }
+      if (_reset_positions_ready && _reset_positions.empty() && _reset_query_epoch == _reset_epoch) {
+          bool flat = ayPositions != nullptr;
+          if (ayPositions) for (auto it = ayPositions->begin(); it != ayPositions->end(); ++it) {
+              auto* position = static_cast<WTSPositionItem*>(*it);
+              if (!position || !position->getContractInfo() || position->getTotalPosition() != 0) flat = false;
+          }
+          if (!flat) ++_reset_epoch; // A metrics receipt can expose a missed trade push; do not reuse an old flat proof.
+      } }
+	const bool metricsOnly = _state == AS_ALLREADY;
+	{
+		std::lock_guard<std::recursive_mutex> resetLock(_reset_gate);
+		if (metricsOnly && (!_metrics_query_pending || _metrics_query_revision != _position_revision))
+		{
+			_metrics_query_pending = false;
+			return;
+		}
+		_metrics_query_pending = false;
+	}
+	portfolio_positions(ayPositions);
+	for (auto& entry : _positions)
+	{
+		entry.second.l_metrics.valid = false;
+		entry.second.s_metrics.valid = false;
+	}
+	if (ayPositions == nullptr)
+	{
+		if (_save_data) saveData();
+		return;
+	}
 	if (ayPositions && ayPositions->size() > 0)
 	{
 		for (auto it = ayPositions->begin(); it != ayPositions->end(); it++)
@@ -1675,6 +1799,19 @@ void TraderAdapter::onRspPosition(const WTSArray* ayPositions)
 			else
 				stdCode = CodeHelper::rawFlatCodeToStdCode(cInfo->getCode(), cInfo->getExchg(), cInfo->getProduct());
 			PosItem& pos = _positions[stdCode];
+			const bool isLong = pItem->getDirection() == WDT_LONG;
+			PositionMetrics& metrics = isLong ? pos.l_metrics : pos.s_metrics;
+			metrics.avg_price = pItem->getAvgPrice();
+			metrics.position_cost = pItem->getPositionCost();
+			metrics.dynprofit = pItem->getDynProfit();
+			metrics.margin = pItem->getMargin();
+			metrics.open_price = pItem->getTotalPosition() > 0 && commInfo->getVolScale() > 0
+				? pItem->getOpenCost() / pItem->getTotalPosition() / commInfo->getVolScale() : 0;
+			metrics.updated_at = replayTime();
+			metrics.valid = (!metricsOnly || decimal::eq(pos.total_pos(isLong), pItem->getTotalPosition()))
+				&& std::isfinite(metrics.avg_price) && metrics.avg_price > 0
+				&& std::isfinite(metrics.position_cost) && std::isfinite(metrics.dynprofit);
+			if (metricsOnly) continue;
 			if (pItem->getDirection() == WDT_LONG)
 			{
 				pos.l_newavail = pItem->getAvailNewPos();
@@ -1691,7 +1828,7 @@ void TraderAdapter::onRspPosition(const WTSArray* ayPositions)
 			}
 		}
 
-		for (auto it = _positions.begin(); it != _positions.end(); it++)
+		if (!metricsOnly) for (auto it = _positions.begin(); it != _positions.end(); it++)
 		{
 			const char* stdCode = it->first.c_str();
 			const PosItem& pItem = it->second;
@@ -1702,6 +1839,11 @@ void TraderAdapter::onRspPosition(const WTSArray* ayPositions)
 				sink->on_position(stdCode, false, pItem.s_prevol, pItem.s_preavail, pItem.s_newvol, pItem.s_newavail, _trading_day);
 			}
 		}
+	}
+	if (metricsOnly)
+	{
+		if (_save_data) saveData();
+		return;
 	}
 
 	WTSLogger::log_dyn("trader", _id.c_str(), LL_INFO,"[{}] Position data updated", _id.c_str());
@@ -1716,6 +1858,24 @@ void TraderAdapter::onRspPosition(const WTSArray* ayPositions)
 
 void TraderAdapter::onRspOrders(const WTSArray* ayOrders)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+	if (reset_order_response(ayOrders)) {
+        std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+        if (_reset_active) portfolio_orders(ayOrders);
+        else portfolio_reset_complete(false);
+        return;
+    }
+    { std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+      if (_reset_orders_ready && _reset_orders.empty() && _reset_query_epoch == _reset_epoch) {
+          bool flat = ayOrders != nullptr;
+          if (ayOrders) for (auto it = ayOrders->begin(); it != ayOrders->end(); ++it) {
+              auto* order = static_cast<WTSOrderInfo*>(*it);
+              if (!order || order->isAlive()) flat = false;
+          }
+          if (!flat) ++_reset_epoch;
+      } }
+	portfolio_orders(ayOrders);
+	if (ayOrders == nullptr) return;
 	if (ayOrders)
 	{
 		if (_orders == NULL)
@@ -1981,8 +2141,14 @@ inline const char* stateToName(WTSOrderState woState)
 
 void TraderAdapter::onPushOrder(WTSOrderInfo* orderInfo)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+	const ExecutionStamp executionTime = ExecutionStamp::now();
+	reset_trade_event();
 	if (orderInfo == NULL)
 		return;
+    { std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+      if (StrUtil::startsWith(orderInfo->getUserTag(), (_order_pattern + ".").c_str(), false))
+          _pending_submissions.erase(strtoul(orderInfo->getUserTag() + _order_pattern.size() + 1, nullptr, 10)); }
 
     if (orderInfo->isError() && _save_data)
         saveTraderRisk(_rt_data_file, _id.c_str(), _trading_day, replayTime(),
@@ -2004,6 +2170,7 @@ void TraderAdapter::onPushOrder(WTSOrderInfo* orderInfo)
 	else
 		stdCode = CodeHelper::rawFlatCodeToStdCode(cInfo->getCode(), cInfo->getExchg(), cInfo->getProduct());
 
+	portfolio_order(orderInfo);
 	bool isBuy = (orderInfo->getDirection() == WDT_LONG && orderInfo->getOffsetType() == WOT_OPEN) || (orderInfo->getDirection() == WDT_SHORT && orderInfo->getOffsetType() != WOT_OPEN);
 	
 	//撤销的话, 要更新统计数据
@@ -2248,6 +2415,10 @@ void TraderAdapter::onPushOrder(WTSOrderInfo* orderInfo)
 			sink->on_order(localid, stdCode.c_str(), isBuy, orderInfo->getVolume(), orderInfo->getVolLeft(), orderInfo->getPrice(), orderInfo->getOrderState() == WOS_Canceled);
 	}
 
+	_execution.record(orderInfo->isError() ? "reject" : "order_update", _trading_day, localid,
+		orderInfo->getEntrustID(), orderInfo->getOrderID(), "", stdCode.c_str(), isBuy,
+		orderInfo->getVolume(), orderInfo->getPrice(), executionTime, {},
+		orderInfo->getVolTraded(), orderInfo->getVolLeft(), orderInfo->getOrderState() == WOS_Canceled);
 	//不管是不是内部订单,订单结束了,都要写到日志里
 	if (_save_data && !orderInfo->isAlive())
 	{
@@ -2260,6 +2431,9 @@ void TraderAdapter::onPushOrder(WTSOrderInfo* orderInfo)
 
 void TraderAdapter::onPushTrade(WTSTradeInfo* tradeRecord)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+	const ExecutionStamp executionTime = ExecutionStamp::now();
+	reset_trade_event();
 	WTSContractInfo* cInfo = tradeRecord->getContractInfo();
 	if (cInfo == NULL)
 		return;
@@ -2284,6 +2458,8 @@ void TraderAdapter::onPushTrade(WTSTradeInfo* tradeRecord)
 			_id.c_str(), stdCode.c_str(), tradeRecord->getUserTag(), tradeRecord->getVolume(), tradeRecord->getPrice());
 
 	PosItem& pItem = _positions[stdCode];
+	++_position_revision;
+	(isLong ? pItem.l_metrics : pItem.s_metrics).valid = false;
 	WTSTradeStateInfo* statInfo = (WTSTradeStateInfo*)_stat_map->get(stdCode.c_str());
 	if (statInfo == NULL)
 	{
@@ -2350,6 +2526,9 @@ void TraderAdapter::onPushTrade(WTSTradeInfo* tradeRecord)
 	}
 
 	printPosition(stdCode.c_str(), pItem);
+    _portfolio_state.update([&](PortfolioView& view) {
+        view.positions[stdCode] = PortfolioPosition{pItem.total_pos(true), pItem.total_pos(false)};
+    });
 
 	//如果是自己的订单，则更新未完成单
 	uint32_t localid = 0;
@@ -2368,6 +2547,8 @@ void TraderAdapter::onPushTrade(WTSTradeInfo* tradeRecord)
 	if (_save_data)
 	{
 		logTrade(localid, stdCode.c_str(), tradeRecord);
+		_execution.record("fill", _trading_day, localid, "", tradeRecord->getRefOrder(), tradeRecord->getTradeID(),
+			stdCode.c_str(), isBuy, tradeRecord->getVolume(), tradeRecord->getPrice(), executionTime);
 	}
 
 	checkSelfMatch(stdCode.c_str(), tradeRecord);
@@ -2375,11 +2556,14 @@ void TraderAdapter::onPushTrade(WTSTradeInfo* tradeRecord)
 	if (_notifier)
 		_notifier->notify(id(), localid, stdCode.c_str(), tradeRecord);
 
+	if (_save_data) saveData();
 	_trader_api->queryAccount();
 }
 
 void TraderAdapter::onTraderError(WTSError* err, void* pData /* = NULL */)
 {
+	auto portfolioMutation = _portfolio_state.mutation();
+    reset_trade_event();
 
     if (err && _save_data)
         saveTraderRisk(_rt_data_file, _id.c_str(), _trading_day, replayTime(),

@@ -10,6 +10,7 @@
 
 #include <queue>
 #include <map>
+#include <set>
 
 typedef std::shared_ptr<BoostMappingFile> BoostMFPtr;
 
@@ -164,6 +165,7 @@ private:
 
 	SpinMutex		_lck_tick_cache;
 	wt_hashmap<std::string, uint32_t> _tick_cache_idx;
+	std::set<uint32_t> _seen_cache_indices;
 	BoostMFPtr		_tick_cache_file;
 	RTTickCache*	_tick_cache_block;
 

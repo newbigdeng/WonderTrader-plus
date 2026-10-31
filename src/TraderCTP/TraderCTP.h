@@ -209,7 +209,8 @@ protected:
 
 	typedef std::queue<CommonExecuter>	QueryQue;
 	QueryQue				m_queQuery;
-	bool					m_bInQuery;
+	std::atomic<bool>		m_bInQuery;
+	bool m_positionQueryError = false, m_orderQueryError = false;
 	StdUniqueMutex			m_mtxQuery;
 	uint64_t				m_lastQryTime;
 

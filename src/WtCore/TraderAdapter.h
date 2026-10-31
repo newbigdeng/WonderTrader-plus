@@ -8,6 +8,13 @@
  * \brief 
  */
 #pragma once
+#include <mutex>
+#include <boost/noncopyable.hpp>
+#include <memory>
+#include <functional>
+#include <vector>
+#include <set>
+#include <atomic>
 
 #include "../Includes/ExecuteDefs.h"
 #include "../Includes/FasterDefs.h"
@@ -15,6 +22,8 @@
 #include "../Share/BoostFile.hpp"
 #include "../Share/StdUtils.hpp"
 #include "../Share/SpinMutex.hpp"
+#include "ExecutionRecorder.hpp"
+#include "PortfolioState.hpp"
 
 NS_WTP_BEGIN
 class WTSVariant;
@@ -46,6 +55,13 @@ public:
 		AS_ALLREADY			//全部就绪
 	} AdapterState;
 
+	struct PositionMetrics
+	{
+		double avg_price, position_cost, dynprofit, open_price, margin;
+		uint64_t updated_at;
+		bool valid;
+	};
+
 	typedef struct _PosItem
 	{
 		//多仓数据
@@ -59,6 +75,7 @@ public:
 		double	s_newavail;
 		double	s_prevol;
 		double	s_preavail;
+		PositionMetrics l_metrics, s_metrics;
 
 		_PosItem()
 		{
@@ -117,10 +134,39 @@ public:
 	}
 
 	inline bool isReady() const { return _state == AS_ALLREADY; }
+	void setExecutionQuoteReader(const ExecutionRecorder::QuoteReader& reader) { _execution.setQuoteReader(reader); }
 
 	void queryFund();
+    bool portfolio_snapshot(PortfolioView& result);
+    bool begin_strategy_reset(const std::string& request, const std::vector<std::string>& contracts, std::string& error, bool query_only = false);
+    std::string advance_strategy_reset(uint64_t now, const std::function<double(const std::string&, bool)>& quote, std::string& error);
+    bool finish_strategy_reset(std::string* error = nullptr);
+    void fail_strategy_reset();
+    void reset_position_response(const WTSArray* positions);
+    bool reset_order_response(const WTSArray* orders);
+    void reset_trade_event();
+    void reset_entrust_error(WTSError* error);
+    std::string reconcile_snapshot(bool execution_idle);
+    void retain_reconcile_proof(const std::string& json);
+    void finish_reconcile_release(bool previously_ready);
+    uint64_t reconcile_event_seq() { std::lock_guard<std::recursive_mutex> lock(_reset_gate); return _reset_epoch; }
+    void startup_guard(bool active) { std::lock_guard<std::recursive_mutex> lock(_reset_gate); _startup_guard = active; }
+    bool startup_release_ready(uint64_t epoch) {
+        std::lock_guard<std::recursive_mutex> lock(_reset_gate);
+        return _startup_guard && !_reset_blocked && !_reset_active && isReady() &&
+            _pending_submissions.empty() && _reset_epoch == epoch;
+    }
+    bool exclusive_reset_sink(ITrdNotifySink* sink) const { return _sinks.size() == 1 && _sinks.count(sink); }
+
 
 private:
+    friend struct NativePortfolioTestAccessor;
+    PortfolioState _portfolio_state;
+    void portfolio_status(bool connected, uint32_t trading_date = 0);
+    void portfolio_positions(const WTSArray* positions);
+    void portfolio_orders(const WTSArray* orders);
+    void portfolio_order(WTSOrderInfo* order);
+    void portfolio_reset_complete(bool complete);
 	uint64_t replayTime() const;
 	uint64_t (*_replay_clock)(uint32_t) = nullptr;
 	uint32_t _replay_clock_id = 0;
@@ -141,7 +187,7 @@ private:
 
 	void	saveData(WTSArray* ayFunds = NULL);
 
-	inline void updateUndone(const char* stdCode, double qty, bool bOuput = true);
+	void updateUndone(const char* stdCode, double qty, bool bOuput = true);
 
 public:
 	double getPosition(const char* stdCode, bool bValidOnly, int32_t flag = 3);
@@ -221,8 +267,26 @@ private:
 	uint32_t			_trading_day;
 
 	ITraderApi*			_trader_api;
+    std::recursive_mutex _reset_gate;
+    bool _reset_blocked = false, _reset_sending = false, _reset_active = false;
+    bool _reset_query_only = false, _reset_previous_blocked = false;
+    bool _startup_guard = false;
+    bool _reconcile_releasing = false, _reconcile_connected = false;
+    std::string _reconcile_proof;
+    uint64_t _reconcile_proof_epoch = 0;
+    std::set<uint32_t> _pending_submissions;
+    bool _reset_orders_ready = false, _reset_positions_ready = false, _reset_wait_positions = false;
+    bool _reset_wait_orders = false, _reset_drain_orders = false, _reset_drain_positions = false;
+    int _reset_stage = 0;
+    uint64_t _reset_epoch = 0, _reset_query_epoch = 0, _reset_delay = 0;
+    std::vector<std::string> _reset_contracts;
+    std::vector<std::shared_ptr<WTSOrderInfo>> _reset_orders;
+    struct ResetPosition { std::string code; bool isLong; double previous, today, previous_available, today_available; };
+    std::vector<ResetPosition> _reset_positions;
+    std::string _reset_error;
+
 	FuncDeleteTrader	_remover;
-	AdapterState		_state;
+	std::atomic<AdapterState> _state;
 
 	EventNotifier*		_notifier;
 
@@ -232,6 +296,8 @@ private:
 	ActionPolicyMgr*	_policy_mgr;
 
 	wt_hashmap<std::string, PosItem> _positions;
+	uint64_t _position_revision = 0, _metrics_query_revision = 0;
+	bool _metrics_query_pending = false;
 
 	SpinMutex	_mtx_orders;
 	OrderMap*	_orders;
@@ -268,6 +334,7 @@ private:
 	BoostFilePtr	_trades_log;		//交易数据日志
 	BoostFilePtr	_orders_log;		//订单数据日志
 	std::string		_rt_data_file;		//实时数据文件
+	ExecutionRecorder _execution;
 };
 
 typedef std::shared_ptr<TraderAdapter>				TraderAdapterPtr;

@@ -49,7 +49,9 @@ public:
 	uint32_t	time_to_mins(uint32_t uTime) const;
 
 private:
+	friend struct NativeLiveTickerTest;
 	void	trigger_price(WTSTickData* curTick);
+	void	close_replay_bar(uint32_t date, uint32_t time);
 
 private:
 	WTSSessionInfo*	_s_info;
@@ -60,6 +62,7 @@ private:
 	uint32_t	_time;
 
 	uint32_t	_cur_pos;
+	uint32_t	_replay_bar_date = 0;
 
 	StdUniqueMutex	_mtx;
 	std::atomic<uint64_t>	_next_check_time;

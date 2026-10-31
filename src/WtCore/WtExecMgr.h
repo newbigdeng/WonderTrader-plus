@@ -56,6 +56,12 @@ public:
 	{
 		_all_cached_targets.clear();
 	}
+    bool reconcile_idle() const {
+        for (const auto& executor : _all_cached_targets)
+            for (const auto& target : executor.second) if (target.second != 0) return false;
+        return true;
+    }
+    bool portfolio_targets_pending() const { return !_all_cached_targets.empty(); }
 
 	/*
 	 *	将目标仓位加入缓存

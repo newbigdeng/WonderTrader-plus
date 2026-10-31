@@ -151,6 +151,10 @@ void WtCtaEngine::init(WTSVariant* cfg, IBaseDataMgr* bdMgr, WtDtMgr* dataMgr, I
 
 void WtCtaEngine::addContext(CtaContextPtr ctx)
 {
+    if (_startup_guard) {
+        auto* context = dynamic_cast<CtaStraBaseCtx*>(ctx.get());
+        if (context) context->freeze_for_reset(true);
+    }
 	uint32_t sid = ctx->id();
 	_ctx_map[sid] = ctx;
 }
@@ -237,6 +241,7 @@ void WtCtaEngine::on_init()
 
 void WtCtaEngine::on_session_begin()
 {
+	std::lock_guard<std::recursive_mutex> resetEvents(_reset_events);
 	WTSLogger::info("Trading day {} begun", _cur_tdate);
 	for (auto it = _ctx_map.begin(); it != _ctx_map.end(); it++)
 	{
@@ -252,6 +257,7 @@ void WtCtaEngine::on_session_begin()
 
 void WtCtaEngine::on_session_end()
 {
+	std::lock_guard<std::recursive_mutex> resetEvents(_reset_events);
 	WtEngine::on_session_end();
 
 	for (auto it = _ctx_map.begin(); it != _ctx_map.end(); it++)
@@ -267,6 +273,7 @@ void WtCtaEngine::on_session_end()
 
 void WtCtaEngine::on_schedule(uint32_t curDate, uint32_t curTime)
 {
+	std::lock_guard<std::recursive_mutex> resetEvents(_reset_events);
 	//去检查一下过滤器
 	_filter_mgr.load_filters();
 	_exec_mgr.clear_cached_targets();
@@ -501,6 +508,7 @@ void WtCtaEngine::handle_pos_change(const char* straName, const char* stdCode, d
 
 void WtCtaEngine::on_tick(const char* stdCode, WTSTickData* curTick)
 {
+	std::lock_guard<std::recursive_mutex> resetEvents(_reset_events);
 	WtEngine::on_tick(stdCode, curTick);
 
 	_data_mgr->handle_push_quote(stdCode, curTick);
@@ -650,6 +658,7 @@ void WtCtaEngine::on_tick(const char* stdCode, WTSTickData* curTick)
 
 void WtCtaEngine::on_bar(const char* stdCode, const char* period, uint32_t times, WTSBarStruct* newBar)
 {
+	std::lock_guard<std::recursive_mutex> resetEvents(_reset_events);
 	thread_local static char key[64] = { 0 };
 	fmtutil::format_to(key, "{}-{}-{}", stdCode, period, times);
 

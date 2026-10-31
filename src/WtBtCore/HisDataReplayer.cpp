@@ -1594,7 +1594,7 @@ uint64_t HisDataReplayer::getNextTickTime(uint32_t curTDate, uint64_t stime /* =
 			}
 		}
 
-		if (tickList._cursor >= tickList._count)
+		if (tickList._cursor > tickList._count)
 			continue;
 
 		uint32_t nextActionTime = tickList._items[tickList._cursor - 1].action_time;
@@ -1664,7 +1664,7 @@ uint64_t HisDataReplayer::getNextTransTime(uint32_t curTDate, uint64_t stime /* 
 			}
 		}
 
-		if (itemList._cursor >= itemList._count)
+		if (itemList._cursor > itemList._count)
 			continue;
 
 		const auto& nextItem = itemList._items[itemList._cursor - 1];
@@ -1712,7 +1712,7 @@ uint64_t HisDataReplayer::getNextOrdDtlTime(uint32_t curTDate, uint64_t stime /*
 			}
 		}
 
-		if (itemList._cursor >= itemList._count)
+		if (itemList._cursor > itemList._count)
 			continue;
 
 		const auto& nextItem = itemList._items[itemList._cursor - 1];
@@ -1760,7 +1760,7 @@ uint64_t HisDataReplayer::getNextOrdQueTime(uint32_t curTDate, uint64_t stime /*
 			}
 		}
 
-		if (itemList._cursor >= itemList._count)
+		if (itemList._cursor > itemList._count)
 			continue;
 
 		const auto& nextItem = itemList._items[itemList._cursor - 1];
@@ -1911,12 +1911,13 @@ uint64_t HisDataReplayer::replayHftDatasByDay(uint32_t curTDate)
 
 bool HisDataReplayer::replayHftDatas(uint64_t stime, uint64_t etime)
 {	
+	bool replayed = false;
 	WTSLogger::log_raw(LL_DEBUG, "replaying hft data...");
 	for (;;)
 	{
 		uint64_t nextTime = min(UINT64_MAX, getNextTickTime(_cur_tdate, stime));
 		if (nextTime == UINT64_MAX)
-			return false;
+			return replayed;
 
 		nextTime = min(nextTime, getNextOrdDtlTime(_cur_tdate, stime));
 		nextTime = min(nextTime, getNextOrdQueTime(_cur_tdate, stime));
@@ -1941,12 +1942,12 @@ bool HisDataReplayer::replayHftDatas(uint64_t stime, uint64_t etime)
 			uint64_t lastTime = (uint64_t)nextItem.action_date * 1000000000 + nextItem.action_time;
 			if (lastTime <= nextTime)
 			{
+				itemList._cursor++;
+
 				WTSOrdDtlData* newData = WTSOrdDtlData::create(nextItem);
 				newData->setCode(stdCode);
 				_listener->handle_order_detail(stdCode, newData);
 				newData->release();
-
-				itemList._cursor++;
 			}
 		}
 
@@ -1955,19 +1956,19 @@ bool HisDataReplayer::replayHftDatas(uint64_t stime, uint64_t etime)
 		{
 			const char* stdCode = v.first.c_str();
 			auto& itemList = _trans_cache[stdCode];
-			if (itemList._cursor = itemList._count)
+			if (itemList._cursor > itemList._count)
 				continue;
 
 			auto& nextItem = itemList._items[itemList._cursor - 1];
 			uint64_t lastTime = (uint64_t)nextItem.action_date * 1000000000 + nextItem.action_time;
 			if (lastTime <= nextTime)
 			{
+				itemList._cursor++;
+
 				WTSTransData* newData = WTSTransData::create(nextItem);
 				newData->setCode(stdCode);
 				_listener->handle_transaction(stdCode, newData);
 				newData->release();
-
-				itemList._cursor++;
 			}
 		}
 
@@ -1983,15 +1984,16 @@ bool HisDataReplayer::replayHftDatas(uint64_t stime, uint64_t etime)
 			uint64_t lastTime = (uint64_t)nextItem.action_date * 1000000000 + nextItem.action_time;
 			if (lastTime <= nextTime)
 			{
+				itemList._cursor++;
+
 				update_price(stdCode, nextItem.price);
 				WTSTickData* newData = WTSTickData::create(nextItem);
 				newData->setCode(stdCode);
 				// 即使上一分钟曾模拟 Tick，这一笔从 .dsb 读取的仍是真实 Tick。
 				_tick_simulated = false;
+				replayed = true;
 				_listener->handle_tick(stdCode, newData, 0);
 				newData->release();
-
-				itemList._cursor++;
 			}
 		}
 
@@ -2007,12 +2009,12 @@ bool HisDataReplayer::replayHftDatas(uint64_t stime, uint64_t etime)
 			uint64_t lastTime = (uint64_t)nextItem.action_date * 1000000000 + nextItem.action_time;
 			if (lastTime <= nextTime)
 			{
+				itemList._cursor++;
+
 				WTSOrdQueData* newData = WTSOrdQueData::create(nextItem);
 				newData->setCode(stdCode);
 				_listener->handle_order_queue(stdCode, newData);
 				newData->release();
-
-				itemList._cursor++;
 			}
 		}
 	}
@@ -2269,7 +2271,6 @@ WTSKlineSlice* HisDataReplayer::get_kline_slice(const char* stdCode, const char*
 		return NULL;
 	}
 
-	bool isClosed = (sInfo->offsetTime(_cur_time, true) >= sInfo->getCloseTime(true));
 	if (realTimes != 1 && !bHasCache)
 	{	
 		std::string rawKey = StrUtil::printf("%s#%s#%u", stdCode, period, baseTimes);
@@ -2308,135 +2309,46 @@ WTSKlineSlice* HisDataReplayer::get_kline_slice(const char* stdCode, const char*
 
 	_codes_in_subbed.insert(stdCode);
 
-	if (kBlkPair->_cursor == UINT_MAX)
-	{
-		//还没有经过初始定位
-		WTSBarStruct bar;
-		bar.date = _cur_tdate;
-		if(kp != KP_DAY)
-			bar.time = (_cur_date - 19900000) * 10000 + _cur_time;
-		
-		auto it = std::lower_bound(kBlkPair->_bars.begin(), kBlkPair->_bars.end(), bar, [isDay, isClosed](const WTSBarStruct& a, const WTSBarStruct& b){
-			if (isDay)
-				if (!isClosed)
-					return a.date < b.date;
-				else 
-					return a.date <= b.date;
-			else
-				return a.time < b.time;
+	// The read boundary is independent of the next bar awaiting replay callbacks.
+	const uint64_t now = (uint64_t)_cur_date * 10000 + _cur_time;
+	CodeHelper::CodeInfo codeInfo = CodeHelper::extractStdCode(stdCode, &_hot_mgr);
+	const auto end = std::upper_bound(kBlkPair->_bars.begin(), kBlkPair->_bars.end(), now,
+		[this, isDay, &codeInfo](uint64_t time, const WTSBarStruct& bar) {
+			const uint64_t close = isDay
+				? _bd_mgr.getBoundaryTime(codeInfo.stdCommID(), bar.date, false, false)
+				: 199000000000ULL + bar.time;
+			return time < close;
 		});
+	const uint32_t visible = (uint32_t)(end - kBlkPair->_bars.begin());
+	if (kBlkPair->_cursor == UINT_MAX)
+		kBlkPair->_cursor = visible;
 
-		std::size_t eIdx = it - kBlkPair->_bars.begin();
-
-		if (it != kBlkPair->_bars.end())
-		{
-			WTSBarStruct& curBar = *it;
-			if (isDay)
-			{
-				if (curBar.date >= _cur_tdate && !isClosed)
-				{
-					if (eIdx > 0)
-					{
-						it--;
-						eIdx--;
-					}
-
-				}
-				else if (curBar.date > _cur_tdate && isClosed)
-				{
-					if (eIdx > 0)
-					{
-						it--;
-						eIdx--;
-					}
-				}
-
-				/*
-				 *	By Wesley @ 2022.11.04
-				 *	根据Issue#122，加了一个兜底的判断
-				 *	主要防止日线回测漏掉第一根bar
-				 */
-				if(eIdx == 0 && curBar.date > _cur_tdate)
-				{
-					kBlkPair->_cursor = 0;
-				}
-				else
-				{
-					kBlkPair->_cursor = eIdx + 1;
-				}
-			}
-			else
-			{
-				if (curBar.time > bar.time)
-				{
-					if (eIdx > 0)
-					{
-						it--;
-						eIdx--;
-					}
-				}
-
-				kBlkPair->_cursor = eIdx + 1;
-			}
-		}
-		else
-		{
-			return NULL;
-		}
-	}
-	else
-	{
-		uint32_t curMin = (_cur_date - 19900000) * 10000 + _cur_time;
-		if (isDay)
-		{
-			if (kBlkPair->_cursor <= kBlkPair->_count)
-			{
-				if(!isClosed)
-				{
-					while (kBlkPair->_bars[kBlkPair->_cursor - 1].date < _cur_tdate  && kBlkPair->_cursor < kBlkPair->_count && kBlkPair->_bars[kBlkPair->_cursor].date < _cur_tdate)
-					{
-						kBlkPair->_cursor++;
-					}
-				}
-				else
-				{
-					while (kBlkPair->_bars[kBlkPair->_cursor - 1].date <= _cur_tdate  && kBlkPair->_cursor < kBlkPair->_count && kBlkPair->_bars[kBlkPair->_cursor].date <= _cur_tdate)
-					{
-						kBlkPair->_cursor++;
-					}
-				}
-				
-
-				if (kBlkPair->_bars[kBlkPair->_cursor - 1].date > _cur_tdate)
-					kBlkPair->_cursor--;
-			}
-		}
-		else
-		{
-			if (kBlkPair->_cursor <= kBlkPair->_count)
-			{
-				while (kBlkPair->_bars[kBlkPair->_cursor-1].time < curMin && kBlkPair->_cursor < kBlkPair->_count)
-				{
-					kBlkPair->_cursor++;
-				}
-
-				if (kBlkPair->_bars[kBlkPair->_cursor - 1].time > curMin)
-					kBlkPair->_cursor--;
-			}
-		}
-	}
-
-
-	if (kBlkPair->_cursor == 0)
+	if (visible == 0)
 		return NULL;
 
-	uint32_t sIdx = 0;
-	if (kBlkPair->_cursor > count)
-		sIdx = kBlkPair->_cursor - count;
+	const uint32_t realCnt = std::min(visible, count);
+	const uint32_t sIdx = visible - realCnt;
 
-	uint32_t realCnt = kBlkPair->_cursor - sIdx;
 	WTSKlineSlice* kline = WTSKlineSlice::create(stdCode, kp, 1, kBlkPair->_bars.data() + sIdx, realCnt);
 	return kline;
+}
+
+namespace {
+// Cursor is one-based and points to the next event, so reads cannot consume it.
+template<typename T>
+std::size_t visible_hft_count(const std::vector<T>& items, std::size_t cursor,
+    uint32_t date, uint32_t minute, uint32_t millis, uint64_t etime = 0)
+{
+    uint64_t cutoff = (uint64_t)date * 1000000000 + minute * 100000 + millis;
+    if (etime != 0)
+        cutoff = std::min(cutoff, etime / 10000 * 1000000000 + etime % 10000 * 100000);
+    const auto end = std::upper_bound(items.begin(), items.end(), cutoff,
+        [](uint64_t time, const T& item) {
+            return time < (uint64_t)item.action_date * 1000000000 + item.action_time;
+        });
+    const std::size_t visible = end - items.begin();
+    return cursor == UINT_MAX ? visible : std::min(visible, cursor == 0 ? 0 : cursor - 1);
+}
 }
 
 WTSTickSlice* HisDataReplayer::get_tick_slice(const char* stdCode, uint32_t count, uint64_t etime)
@@ -2447,217 +2359,59 @@ WTSTickSlice* HisDataReplayer::get_tick_slice(const char* stdCode, uint32_t coun
 	if (!checkTicks(stdCode, _cur_tdate))
 		return NULL;
 
-	auto& tickList = _ticks_cache[stdCode];
-	if (tickList._cursor == 0)
-		return NULL;
-
-	if (tickList._cursor == UINT_MAX)
-	{
-		uint32_t uDate = _cur_date;
-		uint32_t uTime = _cur_time * 100000 + _cur_secs;
-
-		if (etime != 0)
-		{
-			uDate = (uint32_t)(etime / 10000);
-			uTime = (uint32_t)(etime % 10000 * 100000);
-		}
-
-		WTSTickStruct curTick;
-		curTick.action_date = uDate;
-		curTick.action_time = uTime;
-
-		auto tit = std::lower_bound(tickList._items.begin(), tickList._items.end(), curTick, [](const WTSTickStruct& a, const WTSTickStruct& b){
-			if (a.action_date != b.action_date)
-				return a.action_date < b.action_date;
-			else
-				return a.action_time < b.action_time;
-		});
-
-		if(tit == tickList._items.end())
-		{
-			tickList._cursor = tickList._items.size();
-		}
-		else
-		{
-			
-			std::size_t idx = tit - tickList._items.begin();
-			const WTSTickStruct& thisTick = *tit;
-			if (thisTick.action_date > uDate || (thisTick.action_date == uDate && thisTick.action_time > uTime))
-			{
-				if(idx > 0)
-				{
-					tit--;
-					idx--;
-				}
-				else
-				{
-					return NULL;
-				}
-			}
-
-			tickList._cursor = idx + 1;
-		}
-	}
-	
-	//cursor是下一笔tick的index+1，大于当前截止时间的
-	//所以要获取当前截止时间之前的最后一笔tick，需要-2
-	if (tickList._cursor < 2)
-		return NULL;
-	uint32_t eIdx = tickList._cursor - 2;
-	uint32_t sIdx = 0;
-	if (eIdx >= count - 1)
-		sIdx = eIdx + 1 - count;
-
-	uint32_t realCnt = eIdx - sIdx + 1;
+	auto& dataList = _ticks_cache[stdCode];
+	const std::size_t visible = visible_hft_count(dataList._items, dataList._cursor,
+		_cur_date, _cur_time, _cur_secs, etime);
+	const uint32_t realCnt = (uint32_t)std::min(visible, (std::size_t)count);
 	if (realCnt == 0)
 		return NULL;
 
-	WTSTickSlice* ticks = WTSTickSlice::create(stdCode, tickList._items.data() + sIdx, realCnt);
-	return ticks;
+	return WTSTickSlice::create(stdCode, dataList._items.data() + visible - realCnt, realCnt);
 }
 
-WTSOrdDtlSlice* HisDataReplayer::get_order_detail_slice(const char* stdCode, uint32_t count, uint64_t etime /* = 0 */)
+WTSOrdDtlSlice* HisDataReplayer::get_order_detail_slice(const char* stdCode, uint32_t count, uint64_t etime)
 {
 	if (!checkOrderDetails(stdCode, _cur_tdate))
 		return NULL;
 
 	auto& dataList = _orddtl_cache[stdCode];
-	if (dataList._cursor == 0)
-		return NULL;
-
-	if (dataList._cursor == UINT_MAX)
-	{
-		uint32_t uDate = _cur_date;
-		uint32_t uTime = _cur_time * 100000 + _cur_secs;
-
-		if (etime != 0)
-		{
-			uDate = (uint32_t)(etime / 10000);
-			uTime = (uint32_t)(etime % 10000 * 100000);
-		}
-
-		WTSOrdDtlStruct curItem;
-		curItem.action_date = uDate;
-		curItem.action_time = uTime;
-
-		auto tit = std::lower_bound(dataList._items.begin(), dataList._items.end(), curItem, [](const WTSOrdDtlStruct& a, const WTSOrdDtlStruct& b) {
-			if (a.action_date != b.action_date)
-				return a.action_date < b.action_date;
-			else
-				return a.action_time < b.action_time;
-		});
-
-		std::size_t idx = tit - dataList._items.begin();
-		dataList._cursor = idx + 1;
-	}
-
-	uint32_t eIdx = dataList._cursor - 1;
-	uint32_t sIdx = 0;
-	if (eIdx >= count - 1)
-		sIdx = eIdx + 1 - count;
-
-	uint32_t realCnt = eIdx - sIdx + 1;
+	const std::size_t visible = visible_hft_count(dataList._items, dataList._cursor,
+		_cur_date, _cur_time, _cur_secs, etime);
+	const uint32_t realCnt = (uint32_t)std::min(visible, (std::size_t)count);
 	if (realCnt == 0)
 		return NULL;
 
-	WTSOrdDtlSlice* ticks = WTSOrdDtlSlice::create(stdCode, dataList._items.data() + sIdx, realCnt);
-	return ticks;
+	return WTSOrdDtlSlice::create(stdCode, dataList._items.data() + visible - realCnt, realCnt);
 }
 
-WTSOrdQueSlice* HisDataReplayer::get_order_queue_slice(const char* stdCode, uint32_t count, uint64_t etime /* = 0 */)
+WTSOrdQueSlice* HisDataReplayer::get_order_queue_slice(const char* stdCode, uint32_t count, uint64_t etime)
 {
 	if (!checkOrderQueues(stdCode, _cur_tdate))
 		return NULL;
 
 	auto& dataList = _ordque_cache[stdCode];
-	if (dataList._cursor == 0)
-		return NULL;
-
-	if (dataList._cursor == UINT_MAX)
-	{
-		uint32_t uDate = _cur_date;
-		uint32_t uTime = _cur_time * 100000 + _cur_secs;
-
-		if (etime != 0)
-		{
-			uDate = (uint32_t)(etime / 10000);
-			uTime = (uint32_t)(etime % 10000 * 100000);
-		}
-
-		WTSOrdQueStruct curItem;
-		curItem.action_date = uDate;
-		curItem.action_time = uTime;
-
-		auto tit = std::lower_bound(dataList._items.begin(), dataList._items.end(), curItem, [](const WTSOrdQueStruct& a, const WTSOrdQueStruct& b) {
-			if (a.action_date != b.action_date)
-				return a.action_date < b.action_date;
-			else
-				return a.action_time < b.action_time;
-		});
-
-		std::size_t idx = tit - dataList._items.begin();
-		dataList._cursor = idx + 1;
-	}
-
-	uint32_t eIdx = dataList._cursor - 1;
-	uint32_t sIdx = 0;
-	if (eIdx >= count - 1)
-		sIdx = eIdx + 1 - count;
-
-	uint32_t realCnt = eIdx - sIdx + 1;
+	const std::size_t visible = visible_hft_count(dataList._items, dataList._cursor,
+		_cur_date, _cur_time, _cur_secs, etime);
+	const uint32_t realCnt = (uint32_t)std::min(visible, (std::size_t)count);
 	if (realCnt == 0)
 		return NULL;
 
-	WTSOrdQueSlice* ticks = WTSOrdQueSlice::create(stdCode, dataList._items.data() + sIdx, realCnt);
-	return ticks;
+	return WTSOrdQueSlice::create(stdCode, dataList._items.data() + visible - realCnt, realCnt);
 }
 
-WTSTransSlice* HisDataReplayer::get_transaction_slice(const char* stdCode, uint32_t count, uint64_t etime /* = 0 */)
+WTSTransSlice* HisDataReplayer::get_transaction_slice(const char* stdCode, uint32_t count, uint64_t etime)
 {
 	if (!checkTransactions(stdCode, _cur_tdate))
 		return NULL;
 
 	auto& dataList = _trans_cache[stdCode];
-	if (dataList._cursor == 0)
-		return NULL;
-
-	if (dataList._cursor == UINT_MAX)
-	{
-		uint32_t uDate = _cur_date;
-		uint32_t uTime = _cur_time * 100000 + _cur_secs;
-
-		if (etime != 0)
-		{
-			uDate = (uint32_t)(etime / 10000);
-			uTime = (uint32_t)(etime % 10000 * 100000);
-		}
-
-		WTSTransStruct curItem;
-		curItem.action_date = uDate;
-		curItem.action_time = uTime;
-
-		auto tit = std::lower_bound(dataList._items.begin(), dataList._items.end(), curItem, [](const WTSTransStruct& a, const WTSTransStruct& b) {
-			if (a.action_date != b.action_date)
-				return a.action_date < b.action_date;
-			else
-				return a.action_time < b.action_time;
-		});
-
-		std::size_t idx = tit - dataList._items.begin();
-		dataList._cursor = idx + 1;
-	}
-
-	std::size_t eIdx = dataList._cursor - 1;
-	std::size_t sIdx = 0;
-	if (eIdx >= count - 1)
-		sIdx = eIdx + 1 - count;
-
-	std::size_t realCnt = eIdx - sIdx + 1;
+	const std::size_t visible = visible_hft_count(dataList._items, dataList._cursor,
+		_cur_date, _cur_time, _cur_secs, etime);
+	const uint32_t realCnt = (uint32_t)std::min(visible, (std::size_t)count);
 	if (realCnt == 0)
 		return NULL;
 
-	WTSTransSlice* ticks = WTSTransSlice::create(stdCode, dataList._items.data() + sIdx, realCnt);
-	return ticks;
+	return WTSTransSlice::create(stdCode, dataList._items.data() + visible - realCnt, realCnt);
 }
 
 bool HisDataReplayer::checkAllTicks(uint32_t uDate)
@@ -2855,33 +2609,10 @@ WTSTickData* HisDataReplayer::get_last_tick(const char* stdCode)
 	if (!checkTicks(stdCode, _cur_tdate))
 		return NULL;
 
-	auto& tickList = _ticks_cache[stdCode];
-	if (tickList._cursor == 0)
-		return NULL;
-
-	if (tickList._cursor == UINT_MAX)
-	{
-		uint32_t uDate = _cur_date;
-		uint32_t uTime = _cur_time * 100000 + _cur_secs;
-
-		WTSTickStruct curTick;
-		curTick.action_date = uDate;
-		curTick.action_time = uTime;
-
-		auto tit = std::lower_bound(tickList._items.begin(), tickList._items.end(), curTick, [](const WTSTickStruct& a, const WTSTickStruct& b){
-			if (a.action_date != b.action_date)
-				return a.action_date < b.action_date;
-			else
-				return a.action_time < b.action_time;
-		});
-
-		std::size_t idx = tit - tickList._items.begin();
-		tickList._cursor = idx + 1;
-	}
-	else if (tickList._cursor > tickList._count)
-		return NULL;
-
-	return WTSTickData::create(tickList._items[tickList._cursor - 1]);
+	auto& ticks = _ticks_cache[stdCode];
+	const std::size_t visible = visible_hft_count(ticks._items, ticks._cursor,
+		_cur_date, _cur_time, _cur_secs);
+	return visible == 0 ? NULL : WTSTickData::create(ticks._items[visible - 1]);
 }
 
 WTSCommodityInfo* HisDataReplayer::get_commodity_info(const char* stdCode)

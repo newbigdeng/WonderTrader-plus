@@ -8,6 +8,10 @@
  * \brief
  */
 #pragma once
+#include <atomic>
+#include <mutex>
+#include <map>
+#include <functional>
 #include "ITrdNotifySink.h"
 #include "IExecCommand.h"
 #include "WtExecuterFactory.h"
@@ -26,6 +30,13 @@ class WtLocalExecuter : public ExecuteContext,
 	public ITrdNotifySink, public IExecCommand
 {
 public:
+	TraderAdapter* reset_trader() const { return _trader; }
+	void freeze_for_reset(bool value);
+	void clear_reset_targets();
+	bool reset_frozen() const { return _reset_frozen; }
+	bool reconcile_idle();
+    bool portfolio_targets(std::map<std::string, double>& targets, uint64_t& revision, uint64_t& pending);
+    uint64_t portfolio_revision() const { return _portfolio_revision.load(); }
 	WtLocalExecuter(WtExecuterFactory* factory, const char* name, IDataManager* dataMgr);
 	virtual ~WtLocalExecuter();
 
@@ -39,6 +50,9 @@ public:
 	void setTrader(TraderAdapter* adapter);
 
 private:
+    friend struct NativePortfolioTestAccessor;
+    void portfolio_schedule(std::function<void()> task);
+    std::atomic<uint64_t> _portfolio_revision{0}, _portfolio_tasks{0};
 	ExecuteUnitPtr	getUnit(const char* code, bool bAutoCreate = true);
 
 public:
@@ -118,6 +132,9 @@ public:
 
 private:
 	ExecuteUnitMap		_unit_map;
+	std::atomic<bool> _reset_frozen{false};
+	std::recursive_mutex _reset_dispatch;
+	friend struct NativeResetTestAccessor;
 	TraderAdapter*		_trader;
 	WtExecuterFactory*	_factory;
 	IDataManager*		_data_mgr;

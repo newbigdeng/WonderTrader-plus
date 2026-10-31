@@ -528,6 +528,8 @@ public:
 	inline void setMargin(double margin){ m_dMargin = margin; }
 	inline void setAvgPrice(double avgPrice){ m_dAvgPrice = avgPrice; }
 	inline void setDynProfit(double profit){ m_dDynProfit = profit; }
+	inline void setOpenCost(double cost){ m_dOpenCost = cost; }
+	inline double getOpenCost() const{ return m_dOpenCost; }
 
 	inline WTSDirectionType getDirection() const{return m_direction;}
 	inline double	getPrePosition() const{ return m_dPrePosition; }
@@ -570,6 +572,7 @@ public:
 		, m_dTotalPosCost(0)
 		, m_businessType(BT_CASH)
 		, m_pContract(NULL)
+		, m_dOpenCost(0)
 	{}
 	virtual ~WTSPositionItem(){}
 
@@ -590,6 +593,7 @@ protected:
 
 	WTSBusinessType		m_businessType;
 	WTSContractInfo*	m_pContract;
+	double m_dOpenCost; // Broker opening cost, distinct from settlement-based position cost.
 };
 
 //////////////////////////////////////////////////////////////////////////

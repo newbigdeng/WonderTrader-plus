@@ -17,6 +17,7 @@
 
 #include "../Share/CodeHelper.hpp"
 #include "../Share/decimal.h"
+#include "../Share/TimeUtils.hpp"
 
 #include "../WTSTools/WTSLogger.h"
 #include "../WTSTools/WTSHotMgr.h"
@@ -55,6 +56,18 @@ uint32_t HftStraBaseCtx::id()
 void HftStraBaseCtx::setTrader(TraderAdapter* trader)
 {
 	_trader = trader;
+	if (_trader)
+		_trader->setExecutionQuoteReader([engine = _engine, id = _context_id](const char* code) {
+			ExecutionQuote result;
+			WTSTickData* tick = engine->get_last_tick(id, code);
+			if (tick)
+			{
+				result = {tick->bidprice(0), tick->askprice(0), tick->price(),
+					(uint64_t)TimeUtils::makeTime(tick->actiondate(), tick->actiontime())};
+				tick->release();
+			}
+			return result;
+		});
 }
 
 void HftStraBaseCtx::init_outputs()

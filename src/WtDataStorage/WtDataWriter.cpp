@@ -15,6 +15,7 @@
 
 #include <set>
 #include <algorithm>
+#include <limits>
 
 //By Wesley @ 2022.01.05
 #include "../Share/fmtlib.h"
@@ -54,6 +55,32 @@ extern "C"
 
 static const uint32_t CACHE_SIZE_STEP = 200;
 static const uint32_t HFT_SIZE_STEP = 2500;
+
+static void merge_minute_bars(std::string& history, const WTSBarStruct* bars, uint32_t size)
+{
+	const uint32_t oldSize = history.size() / sizeof(WTSBarStruct);
+	const WTSBarStruct* old = (const WTSBarStruct*)history.data();
+	if (oldSize == 0 || old[oldSize - 1].time < bars[0].time)
+	{
+		history.append((const char*)bars, sizeof(WTSBarStruct) * size);
+		return;
+	}
+	std::string merged;
+	merged.reserve(history.size() + sizeof(WTSBarStruct) * size);
+	uint32_t left = 0, right = 0;
+	while (left < oldSize || right < size)
+	{
+		const WTSBarStruct* next;
+		if (right == size || (left < oldSize && old[left].time <= bars[right].time))
+		{
+			if (right < size && old[left].time == bars[right].time) ++right;
+			next = old + left++;
+		}
+		else next = bars + right++;
+		merged.append((const char*)next, sizeof(WTSBarStruct));
+	}
+	history.swap(merged);
+}
 
 const char CMD_CLEAR_CACHE[] = "CMD_CLEAR_CACHE";
 const char MARKER_FILE[] = "marker.ini";
@@ -997,6 +1024,7 @@ WtDataWriter::TickBlockPair* WtDataWriter::getTickBlock(WTSContractInfo* ct, uin
 			fname << path << ct->getCode() << "." << curDate << ".csv";
 			pBlock->_fstream.reset(new std::ofstream());
 			pBlock->_fstream->open(fname.str().c_str(), std::ios_base::app);
+			pBlock->_fstream->precision(std::numeric_limits<double>::max_digits10);
 		}
 
 		path += ct->getCode();
@@ -1497,6 +1525,7 @@ bool WtDataWriter::updateCache(WTSContractInfo* ct, WTSTickData* curTick, uint32
 
 	if (curTick->tradingdate() > item._date)
 	{
+		_seen_cache_indices.insert(idx);
 		//新数据交易日大于老数据,则认为是新一天的数据
 		item._date = curTick->tradingdate();
 		memcpy(&item._tick, &newTick, sizeof(WTSTickStruct));
@@ -1552,9 +1581,18 @@ bool WtDataWriter::updateCache(WTSContractInfo* ct, WTSTickData* curTick, uint32
 		}
 		else
 		{
-			newTick.volume = newTick.total_volume - item._tick.total_volume;
-			newTick.turn_over = newTick.total_turnover - item._tick.total_turnover;
-			newTick.diff_interest = newTick.open_interest - item._tick.open_interest;
+			// Restore the receiver baseline only after the snapshot passes validation.
+			if (_seen_cache_indices.insert(idx).second)
+			{
+				newTick.volume = newTick.turn_over = newTick.diff_interest = 0;
+				pipe_writer_log(_sink, LL_INFO, "{} incremental baseline restored from first same-day snapshot", key);
+			}
+			else
+			{
+				newTick.volume = newTick.total_volume - item._tick.total_volume;
+				newTick.turn_over = newTick.total_turnover - item._tick.total_turnover;
+				newTick.diff_interest = newTick.open_interest - item._tick.open_interest;
+			}
 
 			memcpy(&item._tick, &newTick, sizeof(WTSTickStruct));
 		}
@@ -2056,8 +2094,9 @@ uint32_t WtDataWriter::dump_bars_to_file(WTSContractInfo* ct)
 
 			pipe_writer_log(_sink, LL_INFO, "Openning data storage faile: {}", filename.c_str());
 
+			std::string temporary = filename + ".closing.tmp";
 			BoostFile f;
-			if (f.create_or_open_file(filename.c_str()))
+			if (f.create_new_file(temporary.c_str()))
 			{
 				std::string buffer;
 				bool bOldVer = false;
@@ -2070,7 +2109,7 @@ uint32_t WtDataWriter::dump_bars_to_file(WTSContractInfo* ct)
 				}
 
 				//追加新的数据
-				buffer.append((const char*)kBlkPair->_block->_bars, sizeof(WTSBarStruct)*size);
+				merge_minute_bars(buffer, kBlkPair->_block->_bars, size);
 
 				std::string cmpData = WTSCmpHelper::compress_data(buffer.data(), buffer.size());
 
@@ -2084,6 +2123,8 @@ uint32_t WtDataWriter::dump_bars_to_file(WTSContractInfo* ct)
 				header._size = cmpData.size();
 				f.write_file(&header, sizeof(header));
 				f.write_file(cmpData);
+				f.close_file();
+				boost::filesystem::rename(temporary, filename);
 				count += size;
 
 				//最后将缓存清空
@@ -2123,8 +2164,9 @@ uint32_t WtDataWriter::dump_bars_to_file(WTSContractInfo* ct)
 
 			pipe_writer_log(_sink, LL_INFO, "Openning data storage file: {}", filename.c_str());
 
+			std::string temporary = filename + ".closing.tmp";
 			BoostFile f;
-			if (f.create_or_open_file(filename.c_str()))
+			if (f.create_new_file(temporary.c_str()))
 			{
 				std::string buffer;
 				bool bOldVer = false;
@@ -2136,7 +2178,7 @@ uint32_t WtDataWriter::dump_bars_to_file(WTSContractInfo* ct)
 					buffer.swap(content);
 				}
 
-				buffer.append((const char*)kBlkPair->_block->_bars, sizeof(WTSBarStruct)*size);
+				merge_minute_bars(buffer, kBlkPair->_block->_bars, size);
 
 				std::string cmpData = WTSCmpHelper::compress_data(buffer.data(), buffer.size());
 
@@ -2150,6 +2192,8 @@ uint32_t WtDataWriter::dump_bars_to_file(WTSContractInfo* ct)
 				header._size = cmpData.size();
 				f.write_file(&header, sizeof(header));
 				f.write_file(cmpData);
+				f.close_file();
+				boost::filesystem::rename(temporary, filename);
 				count += size;
 
 				//最后将缓存清空

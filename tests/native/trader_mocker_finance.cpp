@@ -40,6 +40,7 @@ struct Base : IBaseDataMgr {
 };
 struct Spi:ITraderSpi {
  Base base;int rejects=0;std::vector<std::string> orders;std::vector<double> prices,volumes;
+ int queried_orders=-1,queried_trades=-1;
  double balance=0,margin=0,available=0,commission=0,frozen=0,frozen_fee=0,unrealized=0;
  IBaseDataMgr*getBaseDataMgr()override{return &base;}
  void handleEvent(WTSTraderEvent,int32_t)override{}
@@ -49,6 +50,8 @@ struct Spi:ITraderSpi {
   if(orders.empty()||orders.back()!=o->getOrderID())orders.push_back(o->getOrderID());
  }
  void onPushTrade(WTSTradeInfo*t)override{prices.push_back(t->getPrice());volumes.push_back(t->getVolume());}
+ void onRspOrders(const WTSArray*a)override{queried_orders=a?(int)a->size():-1;}
+ void onRspTrades(const WTSArray*a)override{queried_trades=a?(int)a->size():-1;}
  void onRspAccount(WTSArray*a)override{
   auto v=(WTSAccountInfo*)a->at(0);balance=v->getBalance();margin=v->getMargin();
   available=v->getAvailable();commission=v->getCommission();frozen=v->getFrozenMargin();
@@ -99,7 +102,10 @@ int main(int argc, char** argv){
  std::filesystem::create_directories(argv[2]);
  std::filesystem::current_path(argv[2]);
  {
-  Run r("partial_cancel_close",100000,2);r.order(3,110);r.query();
+  Run r("partial_cancel_close",100000,2);
+  r.api->queryOrders();r.api->queryTrades();assert(r.barrier(r.id));
+  assert(r.spi.queried_orders==0 && r.spi.queried_trades==0);
+  r.order(3,110);r.query();
   near(r.spi.frozen,330);near(r.spi.frozen_fee,6);near(r.spi.available,99664);
   r.tick();r.query();near(r.spi.commission,4);near(r.spi.frozen,110);near(r.spi.frozen_fee,2);
   near(r.spi.prices[0],103);near(r.spi.balance,99996);near(r.spi.unrealized,-60);near(r.spi.margin,200);

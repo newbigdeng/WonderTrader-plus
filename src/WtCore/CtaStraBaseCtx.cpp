@@ -12,6 +12,7 @@
 #include "WtHelper.h"
 
 #include <exception>
+#include <boost/filesystem.hpp>
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
 namespace rj = rapidjson;
@@ -654,6 +655,7 @@ void CtaStraBaseCtx::save_data(uint32_t flag /* = 0xFFFFFFFF */)
 //回调函数
 void CtaStraBaseCtx::on_bar(const char* stdCode, const char* period, uint32_t times, WTSBarStruct* newBar)
 {
+	if (_reset_blocked) return;
 	if (newBar == NULL)
 		return;
 
@@ -802,6 +804,7 @@ void CtaStraBaseCtx::update_dyn_profit(const char* stdCode, double price)
 
 void CtaStraBaseCtx::on_tick(const char* stdCode, WTSTickData* newTick, bool bEmitStrategy /* = true */)
 {
+	if (_reset_blocked) return;
 	_price_map[stdCode] = newTick->price();
 
 	//先检查是否要信号要触发
@@ -944,6 +947,7 @@ void CtaStraBaseCtx::on_tick(const char* stdCode, WTSTickData* newTick, bool bEm
 
 bool CtaStraBaseCtx::on_schedule(uint32_t curDate, uint32_t curTime)
 {
+	if (_reset_blocked) return false;
 	_is_in_schedule = true;//开始调度, 修改标记
 
 	//主要用于保存浮动盈亏的
@@ -1402,6 +1406,7 @@ void CtaStraBaseCtx::stra_set_position(const char* stdCode, double qty, const ch
 
 void CtaStraBaseCtx::append_signal(const char* stdCode, double qty, const char* userTag /* = "" */, uint32_t sigType)
 {
+	if (_reset_blocked) return;
 	double curPx = _price_map[stdCode];
 
 	SigInfo& sInfo = _sig_map[stdCode];
@@ -2073,3 +2078,59 @@ bool CtaStraBaseCtx::set_index_value(const char* idxName, const char* lineName, 
 	return true;
 }
 
+
+
+bool CtaStraBaseCtx::archive_and_reset(const std::string& directory, std::string& error)
+{
+    if (!_reset_blocked) { error = "strategy is not frozen"; return false; }
+    try {
+        boost::filesystem::create_directories(directory);
+        const std::string ledger = std::string(WtHelper::getStraDataDir()) + _name + ".json";
+        const std::string userdata = std::string(WtHelper::getStraUsrDatDir()) + "ud_" + _name + ".json";
+        const std::string signals = std::string(WtHelper::getOutputDir()) + _name + "/signals.csv";
+        auto verify = [&]() {
+            std::string text; StdFile::read_file_content(ledger.c_str(), text);
+            rj::Document data; data.Parse(text.c_str());
+            if (data.HasParseError() || !data.IsObject() || !data.HasMember("positions") ||
+                !data["positions"].IsArray() || data["positions"].Size() != _pos_map.size() ||
+                !data.HasMember("signals") || data["signals"].MemberCount() != _sig_map.size() ||
+                data["fund"]["total_profit"].GetDouble() != _fund_info._total_profit ||
+                data["fund"]["total_fees"].GetDouble() != _fund_info._total_fees) return false;
+            for (auto& row : data["positions"].GetArray()) {
+                auto item = _pos_map.find(row["code"].GetString());
+                if (item == _pos_map.end() || row["volume"].GetDouble() != item->second._volume ||
+                    row["details"].Size() != item->second._details.size()) return false;
+            }
+            if (_condtions.empty() && data["conditions"]["items"].MemberCount()) return false;
+            text.clear(); StdFile::read_file_content(userdata.c_str(), text);
+            rj::Document users; users.Parse(text.c_str());
+            if (users.HasParseError() || !users.IsObject() || users.MemberCount() != _user_datas.size()) return false;
+            for (const auto& value : _user_datas)
+                if (!users.HasMember(value.first.c_str()) || !users[value.first.c_str()].IsString() ||
+                    value.second != users[value.first.c_str()].GetString()) return false;
+            return true;
+        };
+        save_data(); save_userdata();
+        if (!verify()) { error = "strategy archive source was not saved correctly"; return false; }
+        boost::filesystem::copy_file(ledger, directory + "/stradata.json");
+        boost::filesystem::copy_file(userdata, directory + "/userdata.json");
+        if (boost::filesystem::exists(signals)) boost::filesystem::copy_file(signals, directory + "/signals.csv");
+        SpinLock lock(_mutex);
+        for (auto& entry : _pos_map) {
+            entry.second._volume = entry.second._dynprofit = entry.second._frozen = 0;
+            entry.second._frozen_date = 0; entry.second._details.clear();
+        }
+        _sig_map.clear(); _condtions.clear();
+        _user_datas.clear(); _ud_modified = false; _last_cond_min = 0;
+        _fund_info._total_dynprofit = 0;
+        save_data(); save_userdata();
+        if (!verify()) { error = "cleared strategy state could not be persisted"; return false; }
+        if (_sig_logs) _sig_logs->close_file();
+        _sig_logs.reset(new BoostFile());
+        if (!_sig_logs->create_new_file(signals.c_str()) ||
+            !_sig_logs->write_file("code,target,sigprice,gentime,usertag\n")) {
+            error = "cleared signal log could not be persisted"; return false;
+        }
+        return true;
+    } catch (const std::exception& ex) { error = ex.what(); return false; }
+}
