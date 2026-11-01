@@ -389,7 +389,7 @@ int TraderMocker::orderInsert(WTSEntrust* entrust)
 	return 0;
 }
 
-int32_t TraderMocker::match_once()
+int32_t TraderMocker::match_once(const std::string& quoted)
 {
 	if (_terminated || _orders == NULL || _orders->size() == 0 || _ticks == NULL)
 		return 0;
@@ -397,6 +397,7 @@ int32_t TraderMocker::match_once()
 	int32_t count = 0;
 	for (const std::string& fullcode : _codes)
 	{
+		if (!quoted.empty() && fullcode != quoted) continue;
 		if (_terminated)
 			return count;
 
@@ -1211,9 +1212,38 @@ bool TraderMocker::replayAccount(double* values, uint32_t* clock)
 	clock[0] = _account_date; clock[1] = _account_time; clock[2] = _account_tdate;
 	return true;
 }
+bool TraderMocker::beginReplayDay(uint32_t tradingDate)
+{
+    if (tradingDate < _replay_tdate) return false;
+    if (tradingDate == _replay_tdate) return true;
+    boost::asio::post(_io_service, [this, tradingDate]() {
+        // Expire outstanding day orders before moving today's lots to yesterday.
+        if (_awaits) {
+            for (auto it = _awaits->begin(); it != _awaits->end(); ++it) {
+                auto* order = static_cast<WTSOrderInfo*>(it->second);
+                auto* cancel = WTSEntrustAction::create(order->getCode(), order->getExchg());
+                cancel->setOrderID(order->getOrderID());
+                orderAction(cancel);
+                cancel->release();
+            }
+        }
+        boost::asio::post(_io_service, [this, tradingDate]() {
+            if (_orders) _orders->clear();
+            if (_trades) _trades->clear();
+            _replay_tdate = tradingDate;
+            if (_listener) _listener->onLoginResult(true, "", tradingDate);
+        });
+    });
+    // The adapter requests positions, orders, trades and cash in successive callbacks.
+    for (int stage = 0; stage < 6; ++stage)
+        if (!replayBarrier()) return false;
+    return true;
+}
+
 int TraderMocker::replayStep(const WTSTickStruct* tick)
 {
 	if (!_replay || !_thrd_worker || _terminated || !tick) return -1;
+	if (!beginReplayDay(tick->trading_date)) return -2;
 	WTSTickStruct copy = *tick;
 	auto promise = std::make_shared<std::promise<int>>();
 	auto future = promise->get_future();
@@ -1225,7 +1255,7 @@ int TraderMocker::replayStep(const WTSTickStruct* tick)
 		auto curTick = WTSTickData::create(copy);
 		std::string key = std::string(copy.exchg) + "." + copy.code;
 		_ticks->add(key, curTick, false);
-		int matched = match_once();
+		int matched = match_once(key);
         if (_capital > 0) writeAccount(false);
         promise->set_value(matched);
 	});

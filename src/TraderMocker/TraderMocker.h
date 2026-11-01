@@ -38,7 +38,8 @@ private:
 	/*
 	*	撮合 定时器
 	*/
-	int32_t		match_once();
+	int32_t		match_once(const std::string& quoted = {});
+	bool beginReplayDay(uint32_t tradingDate);
 
 	uint32_t	makeTradeID();
 	uint32_t	makeOrderID();

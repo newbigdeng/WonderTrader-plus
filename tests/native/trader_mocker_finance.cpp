@@ -138,6 +138,12 @@ int main(int argc, char** argv){
   near(r.spi.commission,20.94);near(r.spi.margin,0);
  }
  {
+  Run r("expire_day_order",100000);
+  r.order(1,90);r.tick();r.query();assert(r.spi.frozen>0);
+  r.tick(89,88,90,2,20261013);r.query();
+  assert(r.spi.prices.empty());near(r.spi.frozen,0);near(r.spi.frozen_fee,0);
+ }
+ {
   Run r("yesterday_and_today",100000);r.order(2,101);r.tick();r.tick(100,99,101,2,20261013);
   r.order(1,101);r.tick(100,99,101,2,20261013);
   r.order(2,99,WOT_CLOSE);r.tick(100,99,101,2,20261013);
