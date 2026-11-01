@@ -23,6 +23,7 @@
 #include "../Share/decimal.h"
 #include "../Share/ModuleHelper.hpp"
 
+#include <algorithm>
 #include <boost/filesystem.hpp>
 
 //By Wesley @ 2022.01.05
@@ -833,7 +834,7 @@ void TraderCTP::OnRspQryInvestorPosition(CThostFtdcInvestorPositionField *pInves
 		if (contract)
 		{
 			WTSCommodityInfo* commInfo = contract->getCommInfo();
-			std::string key = fmt::format("{}-{}", pInvestorPosition->InstrumentID, pInvestorPosition->PosiDirection);
+			std::string key = fmt::format("{}-{}-{}", contract->getExchg(), pInvestorPosition->InstrumentID, pInvestorPosition->PosiDirection);
 			WTSPositionItem* pos = (WTSPositionItem*)m_mapPosition->get(key);
 			if(pos == NULL)
 			{
@@ -842,17 +843,24 @@ void TraderCTP::OnRspQryInvestorPosition(CThostFtdcInvestorPositionField *pInves
 				m_mapPosition->add(key, pos, false);
 			}
 			pos->setDirection(wrapPosDirection(pInvestorPosition->PosiDirection));
-			if(commInfo->getCoverMode() == CM_CoverToday)
+			const auto& row = *pInvestorPosition;
+			const bool split = commInfo->getCoverMode() == CM_CoverToday;
+			const int today = split ? (row.PositionDate == THOST_FTDC_PSD_Today ? row.Position : 0) : row.TodayPosition;
+			const int prior = row.Position - today;
+			pos->setNewPosition(pos->getNewPosition() + today);
+			pos->setPrePosition(pos->getPrePosition() + prior);
+
+			// This adapter sends speculation orders only. Keep all exposure visible,
+			// but don't offer hedge or combination inventory to single-leg closes.
+			if (row.HedgeFlag == THOST_FTDC_HF_Speculation && commInfo->getCategoty() != CC_Combination)
 			{
-				if (pInvestorPosition->PositionDate == THOST_FTDC_PSD_Today)
-					pos->setNewPosition(pInvestorPosition->Position);
-				else
-					pos->setPrePosition(pInvestorPosition->Position);
-			}
-			else
-			{
-				pos->setNewPosition(pInvestorPosition->TodayPosition);
-				pos->setPrePosition(pInvestorPosition->Position - pInvestorPosition->TodayPosition);
+				const int closeFrozen = row.PosiDirection == THOST_FTDC_PD_Long ? row.ShortFrozen : row.LongFrozen;
+				const int frozen = closeFrozen + row.StrikeFrozen + row.AbandonFrozen + row.CombPosition;
+				const int priorFrozen = std::min(prior, std::min(row.YdStrikeFrozen, row.StrikeFrozen));
+				const int availToday = std::max(0, today - (frozen - priorFrozen));
+				const int availPrior = std::max(0, row.Position - frozen - availToday);
+				pos->setAvailNewPos(pos->getAvailNewPos() + availToday);
+				pos->setAvailPrePos(pos->getAvailPrePos() + availPrior);
 			}
 
 			pos->setMargin(pos->getMargin() + pInvestorPosition->UseMargin);
@@ -869,73 +877,6 @@ void TraderCTP::OnRspQryInvestorPosition(CThostFtdcInvestorPositionField *pInves
 				pos->setAvgPrice(0);
 			}
 
-			if (commInfo->getCategoty() != CC_Combination)
-			{
-				if (commInfo->getCoverMode() == CM_CoverToday)
-				{
-					if (pInvestorPosition->PositionDate == THOST_FTDC_PSD_Today)
-					{
-						int availNew = pInvestorPosition->Position;
-						if (pInvestorPosition->PosiDirection == THOST_FTDC_PD_Long)
-						{
-							availNew -= pInvestorPosition->ShortFrozen;
-						}
-						else
-						{
-							availNew -= pInvestorPosition->LongFrozen;
-						}
-						if (availNew < 0)
-							availNew = 0;
-						pos->setAvailNewPos(availNew);
-					}
-					else
-					{
-						int availPre = pInvestorPosition->Position;
-						if (pInvestorPosition->PosiDirection == THOST_FTDC_PD_Long)
-						{
-							availPre -= pInvestorPosition->ShortFrozen;
-						}
-						else
-						{
-							availPre -= pInvestorPosition->LongFrozen;
-						}
-						if (availPre < 0)
-							availPre = 0;
-						pos->setAvailPrePos(availPre);
-					}
-				}
-				else
-				{
-					int availNew = pInvestorPosition->TodayPosition;
-					if (pInvestorPosition->PosiDirection == THOST_FTDC_PD_Long)
-					{
-						availNew -= pInvestorPosition->ShortFrozen;
-					}
-					else
-					{
-						availNew -= pInvestorPosition->LongFrozen;
-					}
-					if (availNew < 0)
-						availNew = 0;
-					pos->setAvailNewPos(availNew);
-
-					double availPre = pos->getNewPosition() + pos->getPrePosition()
-						- pInvestorPosition->LongFrozen - pInvestorPosition->ShortFrozen
-						- pos->getAvailNewPos();
-					pos->setAvailPrePos(availPre);
-				}
-			}
-			else
-			{
-
-			}
-
-			if (decimal::lt(pos->getTotalPosition(), 0.0) && decimal::eq(pos->getMargin(), 0.0))
-			{
-				//有仓位,但是保证金为0,则说明是套利合约,单个合约的可用持仓全部置为0
-				pos->setAvailNewPos(0);
-				pos->setAvailPrePos(0);
-			}
 		}
 		else if (pInvestorPosition->Position != 0) m_positionQueryError = true;
 	}
