@@ -41,6 +41,11 @@ flowchart LR
 | 桥接 | `WtPorter`、`WtBtPorter`、`WtDtPorter` | 导出 C 接口供 Python 调用 |
 | 运行 | `WtRunner`、`WtBtRunner`、`WtUftRunner`、`LoaderRunner` | 实盘、回测、UFT 与合约加载进程入口 |
 
+![原版 WonderTrader 实盘运行架构](images/prod_struture.png)
+
+上图是原版 WT 的实盘运行架构，行情、策略、执行和交易通道分属独立模块。
+本仓库在同一结构上增加了 Plus 回测链路、模拟柜台与账户快照，见页首的实盘与仿真盘架构图。
+
 **插件化接入。** 行情适配器实现 `IParserApi`，交易适配器实现 `ITraderApi`，执行单元实现 `IExecCommand`，
 三者由 CMake 单独编译成动态库并按配置加载。新增柜台只需实现对应接口，不修改引擎。
 
@@ -49,12 +54,20 @@ flowchart LR
 `TraderAdapter` 维护通道委托、成交、持仓与资金，柜台回报再逐层回传。
 HFT 策略直接通过交易通道报单与撤单，不经 CTA 执行器。
 
+组合的目标仓位汇总后，由多个交易通道并行执行，原版称为 M+1+N 执行结构：
+
+![M+1+N 多账户执行架构](images/m1n.png)
+
 **两套回测。** 快速回测走 `WtBtCore`：`HisDataReplayer` 回放历史行情，`CtaMocker`/`HftMocker`/
 `SelMocker`/`UftMocker` 直接撮合，用于验证信号与参数。Plus 回测走实盘引擎：`WtRtRunner`
 读取 `env.replay` 进入回放模式，由 `plus_replay_flush` 推进时间，交易侧接入独立进程的
 `TraderMocker` 模拟柜台，委托、成交、费用和资金都走原生账簿，成交由历史盘口驱动。
 
 ![快速回测与 Plus 回测](images/plus-replay.svg)
+
+快速回测内部由行情回放、Mocker 撮合、成交模型和原生账簿组成：
+
+![CTA 回测架构](images/cta-backtest-architecture-zh.png)
 
 快速回测的 CTA 成交判断抽取为可插拔成交模型：
 `legacy_cta` 保持原版撮合，`causal_touch` 按事件顺序取对手价，`volume_limited` 按参与量限制并允许部分成交。
@@ -92,6 +105,13 @@ K 线回放配置 `close_only` 时每根闭合 K 线只产生一个收盘事件�
 - `TraderMocker` 作为模拟柜台复用 WT 的 `calcFee`，处理合约优先的手续费匹配、最低手续费、
   开平与平今费率、保证金冻结与释放、滑点、部分成交和撤单后的资金恢复；资金不足时拒绝开仓并记录原因。
 
+**期权**
+- 期权行情与委托通过 `ParserCTPOpt`、`TraderCTPOpt` 接入，厂商库位于 `src/API/CTPOpt3.5.8`，
+  `CTPOptLoader` 可单独加载期权合约。
+- 期权持仓回报中的今仓、昨仓、行权冻结与套保标记由交易适配器统一解析，可用量按此扣减。
+- 已安装的 C++ 期权策略工厂可由工作台加载，对冻结的期权历史运行原生回测与回放。
+- 期权定价、Greeks、波动率曲面与到期清算由工作台提供，见 [wtpy-plus](https://github.com/newbigdeng/wtpy-plus) README。
+
 **风控与运行监控**
 - 沿用原版风控：组合资金风控、通道流量风控、账户回撤风控、离合器与人工紧急介入。
 - `WtRiskMonFact` 提供基于引擎资金信息的日内与多日回撤风控。
@@ -116,8 +136,8 @@ K 线回放配置 `close_only` 时每根闭合 K 线只产生一个收盘事件�
 
 | 依赖 | 说明 |
 | --- | --- |
-| GCC、Boost、Boost.Asio、NNG | Ubuntu 26.04 系统包，构建时未固定版本 |
-| CTP SDK 6.7.13 | `src/API/CTP6.7.13-*`，厂商库保留原有条款 |
+| GCC 15.2、Boost 1.90、Boost.Asio 1.38、NNG 1.11 | Ubuntu 26.04 系统包 |
+| CTP SDK 6.7.13、CTPOpt 3.5.8 | `src/API/CTP6.7.13-*`、`src/API/CTPOpt3.5.8`，厂商库保留原有条款 |
 | spdlog 1.3.1、RapidJSON 1.0.2 | `third_party/compat` 保留原始头文件，兼容旧日志与 JSON 接口 |
 | OpenSSL、zlib、curl | 加密、压缩与网络请求 |
 
