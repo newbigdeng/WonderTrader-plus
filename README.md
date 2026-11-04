@@ -65,14 +65,6 @@ HFT 策略直接通过交易通道报单与撤单，不经 CTA 执行器。
 
 ![快速回测与 Plus 回测](images/plus-replay.svg)
 
-快速回测内部由行情回放、Mocker 撮合、成交模型和原生账簿组成：
-
-![CTA 回测架构](images/cta-backtest-architecture-zh.png)
-
-快速回测的 CTA 成交判断抽取为可插拔成交模型：
-`legacy_cta` 保持原版撮合，`causal_touch` 按事件顺序取对手价，`volume_limited` 按参与量限制并允许部分成交。
-K 线回放配置 `close_only` 时每根闭合 K 线只产生一个收盘事件，其他配置走旧的四价路径。
-
 ## 功能介绍
 
 **行情与数据**
