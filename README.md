@@ -6,7 +6,7 @@
 原版 WonderTrader（WT）是以 C++ 为核心的量化研发与交易框架：行情接入、策略引擎（CTA/HFT/UFT/SEL）、
 统一回测、执行器与交易通道、数据存储和运行监控，并通过 [wtpy](https://github.com/wondertrader/wtpy) 提供 Python 接口。
 本仓库在保留原版架构的前提下，补充实盘引擎回放时钟（Plus 回测）、模拟柜台费用与保证金记账、
-账户与持仓快照接口、策略重置/对账/启动保护，
+账户与持仓快照接口、策略重置/对账/启动保护、期权计算与交易，
 并与 [wtpy-plus](https://github.com/newbigdeng/wtpy-plus) 配套组成完整工作台：
 C++ 负责引擎、执行、模拟柜台与账户账簿，Python 负责任务编排、策略接口与网页服务。
 
